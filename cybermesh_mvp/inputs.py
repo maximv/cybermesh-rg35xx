@@ -61,10 +61,10 @@ if ecodes is not None:
     for attr, name in (
         ("ABS_X", "lx"),
         ("ABS_Y", "ly"),
-        ("ABS_Z", "lz"),    # RG35xx left stick (probe: event1)
-        ("ABS_RZ", "lw"),   # RG35xx left stick 2nd axis when right idle
-        ("ABS_RX", "rx"),   # right stick — ignored for map pan
-        ("ABS_RY", "ry"),
+        ("ABS_Z", "lz"),    # RG35xx left stick vertical (event1)
+        ("ABS_RX", "lw"),   # RG35xx left stick horizontal (event1 probe)
+        ("ABS_RY", "ry"),   # right stick vertical
+        ("ABS_RZ", "rx"),   # right stick horizontal
     ):
         code = getattr(ecodes, attr, None)
         if code is not None:
@@ -105,15 +105,14 @@ def _stick_pick(sticks: Dict[str, float], primary: str, alt: str) -> float:
 
 
 def _left_stick_for_pan(sticks: Dict[str, float]) -> Tuple[float, float]:
-    """Pick left-stick axes; ignore right stick (ABS_RX/RY) on RG35xx."""
-    rx = abs(sticks.get("rx", 0.0))
-    ry = abs(sticks.get("ry", 0.0))
-    right_busy = rx > 0.12 or ry > 0.12
-    vertical = _stick_pick(sticks, "lx", "lz")
-    if right_busy:
-        horizontal = sticks.get("ly", 0.0)
-    else:
-        horizontal = _stick_pick(sticks, "ly", "lw")
+    """Return (vertical, horizontal) for the left stick; right stick is ignored."""
+    if _map_stick_layout() == "std":
+        vertical = _stick_pick(sticks, "ly", "lz")
+        horizontal = _stick_pick(sticks, "lx", "lw")
+        return vertical, horizontal
+    # RG35xx pro: left = ABS_Z + ABS_RX on /dev/input/event1
+    vertical = _stick_pick(sticks, "lz", "ly")
+    horizontal = _stick_pick(sticks, "lw", "lx")
     return vertical, horizontal
 
 
@@ -125,8 +124,8 @@ def combine_pan_vector(
 ) -> Tuple[float, float]:
     """Return pan direction; x=right, y=down, each in [-1, 1].
 
-    RG35xx: left stick is ABS_Z / ABS_RZ on /dev/input/event1 (not ABS_X/Y).
-    Right stick (ABS_RX/RY/RZ) is ignored for map pan.
+    RG35xx pro: left stick is ABS_Z (vertical) + ABS_RX (horizontal) on event1.
+    Right stick (ABS_RY/RZ) is ignored for map pan.
     """
     held = held or {}
     hx = _norm_hat(hat_x)
@@ -140,14 +139,14 @@ def combine_pan_vector(
     elif held.get("DOWN"):
         hy = 1
 
-    lx, ly = _left_stick_for_pan(sticks)
+    stick_v, stick_h = _left_stick_for_pan(sticks)
 
     if _map_stick_layout() == "std":
-        vx = -float(hx) + lx
-        vy = -float(hy) + ly
+        vx = -float(hx) + stick_h
+        vy = -float(hy) + stick_v
     else:
-        vx = -float(hx) + ly
-        vy = -float(hy) - lx
+        vx = -float(hx) + stick_h
+        vy = -float(hy) - stick_v
 
     mag = math.hypot(vx, vy)
     if mag > 1.0:
@@ -338,6 +337,15 @@ class InputReader:
         if pressed:
             self._emit(action)
 
+    def _default_axis_range(self, code: int) -> Tuple[int, int]:
+        if code in self._axis_range:
+            return self._axis_range[code]
+        if ecodes is not None and _map_stick_layout() == "pro":
+            for attr in ("ABS_Z", "ABS_RX", "ABS_RY", "ABS_RZ"):
+                if getattr(ecodes, attr, None) == code:
+                    return (-4096, 4096)
+        return (-32768, 32767)
+
     def _handle_abs(self, event, is_pan: bool) -> None:
         if ecodes is None or not is_pan:
             return
@@ -366,7 +374,7 @@ class InputReader:
         elif code in STICK_AXIS:
             name = STICK_AXIS[code]
             with self._lock:
-                lo, hi = self._axis_range.get(code, (-32768, 32767))
+                lo, hi = self._default_axis_range(code)
             n = _norm_axis(val, lo, hi, invert_y=False)
             with self._lock:
                 self._sticks[name] = n

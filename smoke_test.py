@@ -215,17 +215,39 @@ def test_node_detail() -> None:
 
 
 def test_node_filter() -> None:
-    from cybermesh_mvp.radio import NodeInfo, RadioManager
+    from cybermesh_mvp.radio import (
+        NODE_SORT_DISTANCE,
+        NODE_SORT_SNR,
+        NodeInfo,
+        RadioManager,
+    )
 
     nodes = [
-        NodeInfo(1, "!1", "ABC", "Alpha", None, None, None, None, None, None, False),
-        NodeInfo(2, "!2", "XYZ", "Beta", None, None, None, None, None, None, True),
+        NodeInfo(1, "!1", "ABC", "Alpha Node", 5.0, 80, None, None, None, 1000.0, False),
+        NodeInfo(2, "!2", "XYZ", "Beta", 12.0, 90, None, None, None, 500.0, True),
+        NodeInfo(3, "!3", "QWE", "Quiet", None, None, None, None, None, 200.0, False),
     ]
     got = RadioManager.filter_nodes(nodes, "alp")
     assert len(got) == 1 and got[0].short == "ABC"
+    got = RadioManager.filter_nodes(nodes, "beta")
+    assert len(got) == 1 and got[0].short == "XYZ"
     got = RadioManager.filter_nodes(nodes, "xyz")
     assert len(got) == 1 and got[0].is_favorite
-    assert len(RadioManager.filter_nodes(nodes, "")) == 2
+    assert len(RadioManager.filter_nodes(nodes, "")) == 3
+
+    by_snr = RadioManager.sort_nodes(nodes, NODE_SORT_SNR)
+    assert by_snr[0].snr == 12.0
+    assert by_snr[-1].snr is None
+
+    by_dist = RadioManager.sort_nodes(nodes, NODE_SORT_DISTANCE)
+    assert by_dist[0].distance_m == 200.0
+    assert by_dist[-1].distance_m == 1000.0
+
+    r = RadioManager()
+    line1, line2 = r.node_row_lines(nodes[0])
+    assert "ABC" in line1
+    assert line2 == "Alpha Node"
+    assert "Alpha Node" in r.format_node_row(nodes[0])
     print("node filter OK")
 
 
@@ -433,20 +455,23 @@ def test_map_pan_vector() -> None:
 
     assert _norm_axis(0, -32768, 32767) == 0.0
     assert _norm_axis(32767, -32768, 32767) > 0.8
+    # RG35xx uses ±4096 range — must not fall below deadzone at full throw
+    assert _norm_axis(4096, -4096, 4096) > 0.8
+    assert _norm_axis(1086, -4096, 4096) > 0.1
     assert _norm_hat(-1) == -1
     assert _norm_hat(2) == 1
     # D-pad up (hat_y=-1) inverted on map
     vx, vy = combine_pan_vector(0, -1, {})
     assert vy > 0
-    # RG35xx left stick: ABS_Z vertical, ABS_RZ horizontal (pro layout)
+    # RG35xx left stick: ABS_Z vertical, ABS_RX horizontal (pro layout)
     vx, vy = combine_pan_vector(0, 0, {"lz": 0.8, "lw": 0.0})
     assert vy < 0
     vx, vy = combine_pan_vector(0, 0, {"lz": 0.0, "lw": 0.8})
     assert vx > 0.4
-    # Right stick ignored
-    lx, ly = _left_stick_for_pan({"rx": 0.9, "ry": 0.9, "lw": 0.8, "lz": 0.8})
-    assert abs(ly) < 0.01
-    assert abs(lx) > 0.5
+    # Right stick ignored for pan
+    stick_v, stick_h = _left_stick_for_pan({"rx": 0.9, "ry": 0.9, "lw": 0.8, "lz": 0.0})
+    assert abs(stick_h) > 0.5
+    assert abs(stick_v) < 0.01
     print("map pan vector OK")
 
 

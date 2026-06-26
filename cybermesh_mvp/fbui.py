@@ -17,7 +17,13 @@ from .fonts import Fonts
 from .geo import format_distance
 from .mapview import MapView
 from .chat_types import ChatMessage, SEND_FAILED, SEND_PENDING
-from .radio import BleDevice, RadioManager
+from .radio import (
+    BleDevice,
+    NODE_SORT_DEFAULT,
+    NODE_SORT_LABELS,
+    NODE_SORT_MODES,
+    RadioManager,
+)
 
 KbdTarget = Tuple[str, int]  # ("channel"|"dm"|"chname"|"psk", index/peer)
 
@@ -163,6 +169,7 @@ class FbUI:
         self._pre_menu_view = "chat"
         self._auto_scan_done = False
         self.nodes_filter = ""
+        self.nodes_sort = NODE_SORT_DEFAULT
 
         self.ch_edit_idx = 0
         self.ch_edit_name = ""
@@ -186,7 +193,27 @@ class FbUI:
             self.radio.start_scan()
 
     def _filtered_nodes(self):
-        return self.radio.filter_nodes(self.radio.node_list(), self.nodes_filter)
+        nodes = self.radio.filter_nodes(self.radio.node_list(), self.nodes_filter)
+        return self.radio.sort_nodes(nodes, self.nodes_sort)
+
+    def _nodes_row_h(self) -> int:
+        return 40
+
+    def _nodes_visible_rows(self) -> int:
+        extra = 58 if self.nodes_filter else 50
+        return max(3, (self.H - self.header_h - self.footer_h - extra) // self._nodes_row_h())
+
+    def _cycle_nodes_sort(self, direction: int) -> None:
+        modes = NODE_SORT_MODES
+        try:
+            idx = modes.index(self.nodes_sort)
+        except ValueError:
+            idx = 0
+        self.nodes_sort = modes[(idx + direction) % len(modes)]
+        self.sel = 0
+        self.scroll = 0
+        label = NODE_SORT_LABELS.get(self.nodes_sort, self.nodes_sort)
+        self.set_status(f"Сортировка: {label}", 2.5)
 
     def _clamp_nodes_sel(self) -> None:
         nodes = self._filtered_nodes()
@@ -487,6 +514,9 @@ class FbUI:
         if action in ("CHPREV", "CHNEXT") and self.view == "chat":
             self._cycle_channel(-1 if action == "CHPREV" else 1)
             return
+        if action in ("CHPREV", "CHNEXT") and self.view == "nodes" and not self.menu_open:
+            self._cycle_nodes_sort(-1 if action == "CHPREV" else 1)
+            return
         if action in ("CHPREV", "CHNEXT") and self.view == "map" and not self.menu_open:
             self._cycle_map_node(-1 if action == "CHPREV" else 1)
             return
@@ -760,7 +790,7 @@ class FbUI:
 
     def _action_nodes(self, action: str) -> None:
         nodes = self._filtered_nodes()
-        visible = self._list_rows()
+        visible = self._nodes_visible_rows()
         if action == "UP":
             self.sel = max(0, self.sel - 1)
             if self.sel < self.scroll:
@@ -1078,7 +1108,7 @@ class FbUI:
         elif self.view == "dms":
             text = "A:открыть B:назад"
         elif self.view == "nodes":
-            text = "Y:поиск X:* Select:сброс B:назад"
+            text = "L2/R2:сорт Y:поиск X:* Select:сброс B:назад"
         elif self.view == "ctx":
             text = "A:выбор B:отмена"
         elif self.view == "nodeinfo":
@@ -1217,15 +1247,16 @@ class FbUI:
             title = f"Узлы ({len(all_nodes)})"
         if fav_n:
             title += f"  *{fav_n}"
+        sort_label = NODE_SORT_LABELS.get(self.nodes_sort, self.nodes_sort)
+        title += f"  [{sort_label}]"
         if snap.nodes_loading:
             title += "  …"
-        self.fonts.draw(d, (12, self.header_h + 8), title, COL_ACCENT, "normal")
+        self.fonts.draw(d, (12, self.header_h + 8), title[:58], COL_ACCENT, "normal")
         if self.nodes_filter:
             q = self.nodes_filter if len(self.nodes_filter) <= 28 else self.nodes_filter[:28] + "…"
             self.fonts.draw(d, (12, self.header_h + 28), f"Поиск: {q}", COL_DIM, "small")
-        list_y = self.header_h + (50 if self.nodes_filter else 40)
-        items = self.radio.node_rows_for(nodes)
-        if not items:
+        list_y = self.header_h + (50 if self.nodes_filter else 42)
+        if not nodes:
             if self.nodes_filter:
                 hint = "(нет совпадений)"
             elif snap.nodes_loading:
@@ -1234,7 +1265,19 @@ class FbUI:
                 hint = "(пусто)"
             self.fonts.draw(d, (12, list_y), hint, COL_DIM, "small")
             return
-        self._draw_items(d, items, list_y, self.sel, self.scroll)
+        row_h = self._nodes_row_h()
+        visible = self._nodes_visible_rows()
+        x, width = 10, self.W - 20
+        for i in range(self.scroll, min(len(nodes), self.scroll + visible)):
+            node = nodes[i]
+            line1, line2 = self.radio.node_row_lines(node)
+            ry = list_y + (i - self.scroll) * row_h
+            box = (x, ry, x + width, ry + row_h - 4)
+            draw_list_item(d, box, i == self.sel)
+            mark = "▸ " if i == self.sel else "  "
+            self.fonts.draw(d, (x + 8, ry + 3), (mark + line1)[:58], COL_TEXT, "small")
+            if line2:
+                self.fonts.draw(d, (x + 8, ry + 19), line2[:58], COL_DIM, "small")
 
     def _draw_chcfg(self, d) -> None:
         self.fonts.draw(d, (12, self.header_h + 8), "Каналы", COL_ACCENT, "normal")

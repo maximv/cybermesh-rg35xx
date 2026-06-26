@@ -19,6 +19,15 @@ from .msgstore import HistoryStore, load_history
 
 BROADCAST_NUM = 0xFFFFFFFF
 ROLE_NAMES = {0: "OFF", 1: "PRI", 2: "SEC"}
+NODE_SORT_DEFAULT = "default"
+NODE_SORT_SNR = "snr"
+NODE_SORT_DISTANCE = "distance"
+NODE_SORT_MODES = (NODE_SORT_DEFAULT, NODE_SORT_SNR, NODE_SORT_DISTANCE)
+NODE_SORT_LABELS = {
+    NODE_SORT_DEFAULT: "избр+рядом",
+    NODE_SORT_SNR: "сигнал",
+    NODE_SORT_DISTANCE: "дистанция",
+}
 MESHTASTIC_SERVICE_UUID = "6ba1b218-15a8-461f-9fa8-5dcae273eafd"
 _BLE_MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
 BLE_SCAN_TIMEOUT = 10.0
@@ -1603,6 +1612,32 @@ class RadioManager:
         )
         return out
 
+    @staticmethod
+    def sort_nodes(nodes: List[NodeInfo], mode: str = NODE_SORT_DEFAULT) -> List[NodeInfo]:
+        if mode == NODE_SORT_SNR:
+            return sorted(
+                nodes,
+                key=lambda n: (n.snr is None, -(n.snr if n.snr is not None else -999.0), n.short.lower()),
+            )
+        if mode == NODE_SORT_DISTANCE:
+            return sorted(
+                nodes,
+                key=lambda n: (
+                    n.distance_m is None,
+                    n.distance_m if n.distance_m is not None else 1e12,
+                    n.short.lower(),
+                ),
+            )
+        return sorted(
+            nodes,
+            key=lambda n: (
+                not n.is_favorite,
+                n.distance_m is None,
+                n.distance_m if n.distance_m is not None else 1e12,
+                n.short.lower(),
+            ),
+        )
+
     def _patch_node_favorite(self, iface, num: int, favorite: bool) -> None:
         nodes = getattr(iface, "nodes", None) or {}
         for n in nodes.values():
@@ -1717,8 +1752,8 @@ class RadioManager:
     def short_for_num(self, num: int) -> str:
         return self._short_for_num(num)
 
-    def format_node_row(self, n: NodeInfo) -> str:
-        prefix = "* " if n.is_favorite else "  "
+    @staticmethod
+    def _node_row_metrics(n: NodeInfo) -> str:
         extra = []
         if n.distance_m is not None:
             extra.append(format_distance(n.distance_m))
@@ -1726,14 +1761,30 @@ class RadioManager:
             extra.append(f"SNR {n.snr}")
         if n.battery is not None:
             extra.append(f"{n.battery}%")
-        suffix = f" ({', '.join(extra)})" if extra else ""
-        return f"{prefix}{n.short}{suffix}"
+        return f" ({', '.join(extra)})" if extra else ""
+
+    def node_row_lines(self, n: NodeInfo) -> Tuple[str, str]:
+        """Primary line (short + metrics) and secondary line (long name)."""
+        prefix = "* " if n.is_favorite else ""
+        line1 = f"{prefix}{n.short}{self._node_row_metrics(n)}"
+        long_name = (n.long or "").strip()
+        if long_name and long_name.casefold() != (n.short or "").strip().casefold():
+            line2 = long_name
+        else:
+            line2 = ""
+        return line1, line2
+
+    def format_node_row(self, n: NodeInfo) -> str:
+        line1, line2 = self.node_row_lines(n)
+        if line2:
+            return f"{line1} — {line2}"
+        return line1
 
     @staticmethod
     def filter_nodes(nodes: List[NodeInfo], query: str) -> List[NodeInfo]:
         q = query.strip().lower()
         if not q:
-            return nodes
+            return list(nodes)
         out: List[NodeInfo] = []
         for n in nodes:
             blob = f"{n.short} {n.long} {n.node_id} {n.num}".lower()
