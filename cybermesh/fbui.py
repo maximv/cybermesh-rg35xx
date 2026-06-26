@@ -1828,10 +1828,17 @@ class FbUI:
                 self.fonts.draw(d, (cx + 18, cy + 6), glyph, COL_TEXT, "normal")
 
     def _draw_menu(self, d) -> None:
-        overlay = (60, 70, self.W - 60, 70 + 40 + len(self.menu_items) * self.row_h)
+        n = len(self.menu_items)
+        y0 = self.header_h + 2
+        title_y = y0 + 6
+        items_top = y0 + 28
+        # Clamp the frame so the last item (Quit) stays above the footer bar.
+        max_bottom = self.H - self.footer_h - 4
+        bottom = min(max_bottom, items_top + n * self.row_h + 4)
+        overlay = (60, y0, self.W - 60, bottom)
         draw_menu_frame(d, overlay)
-        self.fonts.draw(d, (overlay[0] + 14, 78), t("menu.title"), COL_ACCENT2, "normal")
-        self._draw_items(d, self.menu_items, 110, self.menu_sel, 0,
+        self.fonts.draw(d, (overlay[0] + 14, title_y), t("menu.title"), COL_ACCENT2, "normal")
+        self._draw_items(d, self.menu_items, items_top, self.menu_sel, 0,
                          x=overlay[0] + 8, width=self.W - 2 * (overlay[0] + 8))
 
     def _draw_items(self, d, items, top, selected, scroll, x=10, width=None) -> None:
