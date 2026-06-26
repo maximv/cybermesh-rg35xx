@@ -25,7 +25,7 @@ from .radio import (
     RadioManager,
     node_sort_label,
 )
-from .audio import save_sound_enabled
+from .audio import save_sound_enabled, save_volume
 from .i18n import (
     lang_name,
     load_language,
@@ -100,6 +100,8 @@ KBD_LAYERS = [
     ("РУС", ["йцукенгшщзхъ", "фывапролджэ", "ячсмитьбюё"]),
     ("LAT", ["qwertyuiop", "asdfghjkl", "zxcvbnm"]),
     ("123", ["1234567890", "-/:;()@&", ".,?!'\"+=*#"]),
+    # Single code-point emoji only (so per-cell indexing stays one glyph = one char).
+    ("EMO", ["😀😃😄😁😆😅😂🙂😉😊", "😍😘😎🤔😴😭😡👍👎🙏", "🔥💯✨⭐🎉👀💀🚀📡🔋"]),
 ]
 MAX_MSG_LEN = 200
 _PRELOAD_DOTS = (".", "..", "...")
@@ -200,8 +202,7 @@ class FbUI:
         self.sysaudio = SystemVolume(log=log)
 
         self._chat_follow = True
-        self._volume: Optional[int] = None
-        self._vol_poll_t = 0.0
+        self._volume: int = self.sfx.volume if self.sfx is not None else 80
         self._bat_pct: Optional[int] = None
         self._bat_charging = False
         self._bat_poll_t = 0.0
@@ -347,13 +348,15 @@ class FbUI:
     VOL_STEP = 5
 
     def _adjust_volume(self, direction: int) -> None:
-        if not self.sysaudio.available:
-            self.set_status(t("status.volume_na"), 1.5)
-            return
-        newv = self.sysaudio.change(self.VOL_STEP * direction)
-        if newv is not None:
-            self._volume = newv
-            self.set_status(t("status.volume", pct=newv), 1.5)
+        newv = max(0, min(100, self._volume + self.VOL_STEP * direction))
+        self._volume = newv
+        if self.sfx is not None:
+            self.sfx.set_volume(newv)
+        save_volume(self.port_dir, newv)
+        # Best-effort: also nudge the system mixer if a working control exists.
+        if self.sysaudio.available:
+            self.sysaudio.set_volume(newv)
+        self.set_status(t("status.volume", pct=newv), 1.5)
 
     def _header_status(self) -> str:
         now = time.time()
@@ -362,13 +365,8 @@ class FbUI:
             bat = read_battery()
             if bat is not None:
                 self._bat_pct, self._bat_charging = bat
-        if now - self._vol_poll_t > 10.0:
-            self._vol_poll_t = now
-            if self.sysaudio.available:
-                self._volume = self.sysaudio.get_volume()
         parts: List[str] = []
-        if self._volume is not None:
-            parts.append(t("hud.volume", pct=self._volume))
+        parts.append(t("hud.volume", pct=self._volume))
         if self._bat_pct is not None:
             chg = "+" if self._bat_charging else ""
             parts.append(t("hud.battery", pct=self._bat_pct, chg=chg))

@@ -482,6 +482,51 @@ def test_audio_synth() -> None:
     print("audio synth OK")
 
 
+def test_audio_volume() -> None:
+    import array
+    import io
+    import wave
+    from pathlib import Path
+    import tempfile
+
+    from cybermesh.audio import (
+        DEFAULT_VOLUME,
+        SfxPlayer,
+        _scale_wav,
+        load_volume,
+        save_volume,
+        synth_modem_connect,
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        port = Path(td)
+        assert load_volume(port) is None
+        save_volume(port, 40)
+        assert load_volume(port) == 40
+        save_volume(port, 999)
+        assert load_volume(port) == 100
+        p = SfxPlayer(log=lambda _m: None, port_dir=port)
+        assert p.volume == 100
+        assert p.set_volume(55) == 55
+        assert p.set_volume(-10) == 0
+
+    p2 = SfxPlayer(log=lambda _m: None)
+    assert p2.volume == DEFAULT_VOLUME
+
+    def peak(wav: bytes) -> int:
+        with wave.open(io.BytesIO(wav), "rb") as wf:
+            frames = wf.readframes(wf.getnframes())
+        pcm = array.array("h")
+        pcm.frombytes(frames)
+        return max(abs(s) for s in pcm)
+
+    full = synth_modem_connect()
+    quiet = _scale_wav(full, 0.25)
+    assert peak(quiet) < peak(full) * 0.5
+    assert _scale_wav(full, 1.0) == full
+    print("audio volume OK")
+
+
 def test_splash_radar() -> None:
     from PIL import Image, ImageDraw
 
@@ -740,6 +785,23 @@ def test_my_node_detail() -> None:
     print("my node detail OK")
 
 
+def test_keyboard_layers() -> None:
+    """Every keyboard cell must be exactly one character (incl. the emoji layer)."""
+    from cybermesh.fbui import KBD_LAYERS
+
+    names = [name for name, _ in KBD_LAYERS]
+    assert "EMO" in names, names
+    for name, rows in KBD_LAYERS:
+        for row in rows:
+            for ch in row:
+                assert len(ch) == 1, (name, ch)
+    emo = dict(KBD_LAYERS)["EMO"]
+    # All emoji must be single Unicode code points (no ZWJ/skin-tone sequences).
+    for row in emo:
+        assert all(0x1F000 <= ord(c) <= 0x1FAFF or 0x2600 <= ord(c) <= 0x2BFF for c in row), row
+    print("keyboard layers OK")
+
+
 def test_volume_keys() -> None:
     """Hardware volume keys emit VOLUP/VOLDOWN (incl. autorepeat)."""
     import queue as _q
@@ -754,14 +816,30 @@ def test_volume_keys() -> None:
     def ev(code, value):
         return type("E", (), {"code": code, "value": value})()
 
-    r._handle_key(ev(up, 1))
-    r._handle_key(ev(up, 2))      # autorepeat allowed for volume
-    r._handle_key(ev(up, 0))      # release — no emit
+    r._handle_key(ev(up, 1))      # press -> emit once, mark held
+    assert up in r._vol_held
+    r._handle_key(ev(up, 0))      # release -> stop holding, no emit
+    assert up not in r._vol_held
     r._handle_key(ev(down, 1))
     emitted = []
     while not actions.empty():
         emitted.append(actions.get_nowait())
-    assert emitted == ["VOLUP", "VOLUP", "VOLDOWN"], emitted
+    assert emitted == ["VOLUP", "VOLDOWN"], emitted
+
+    # Software autorepeat: a held key past its next-fire time emits again.
+    import time as _t
+    r._handle_key(ev(down, 1))
+    while not actions.empty():
+        actions.get_nowait()
+    with r._lock:
+        r._vol_held[down][1] = _t.monotonic() - 0.01  # force due
+    now = _t.monotonic()
+    with r._lock:
+        items = list(r._vol_held.items())
+    for code, st in items:
+        if now >= st[1]:
+            r._emit(st[0])
+    assert actions.get_nowait() == "VOLDOWN"
     print("volume keys OK")
 
 
@@ -799,10 +877,12 @@ def main() -> int:
     test_msgstore_roundtrip()
     test_ble_device()
     test_audio_synth()
+    test_audio_volume()
     test_splash_radar()
     test_map_pan_vector()
     test_force_quit_chord()
     test_menu_button_single_emit()
+    test_keyboard_layers()
     test_volume_keys()
     test_sysinfo_graceful()
     test_fixed_position_from_config()
