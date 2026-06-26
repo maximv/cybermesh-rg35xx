@@ -32,11 +32,10 @@ BTN_MAP: Dict[int, str] = {
     309: "PGDN",    # R1
     310: "SELECT",
     311: "START",
-    312: "MENU",    # M button (RG35xx, measured)
-    314: "CHPREV",  # L2
+    312: "MENU",    # M button (RG35xx). NB: M emits 312 AND 354 per press —
+    314: "CHPREV",  # L2          map only ONE of them or MENU toggles twice.
     315: "CHNEXT",  # R2
-    316: "MENU",    # M / MODE (other firmwares)
-    354: "MENU",    # M button alt code (RG35xx, measured)
+    316: "MENU",    # M / MODE (other firmwares; not emitted alongside 312 there)
 }
 
 
