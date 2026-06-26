@@ -13,6 +13,7 @@ if [ -z "$GIT_URL" ]; then
 fi
 
 pkill -f cybermesh.main 2>/dev/null || true
+pkill -f cybermesh_mvp.main 2>/dev/null || true  # kill stale pre-rename process
 
 rm -rf "$APP_DIR"
 

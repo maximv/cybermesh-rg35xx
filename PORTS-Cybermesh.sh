@@ -18,6 +18,7 @@ if [ -z "$APP" ]; then
 fi
 
 pkill -f "cybermesh.main" 2>/dev/null || true
+pkill -f "cybermesh_mvp.main" 2>/dev/null || true  # kill stale pre-rename process
 sleep 1
 
 if [ -x "$APP/Cybermesh.sh" ]; then
