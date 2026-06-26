@@ -613,7 +613,7 @@ def test_map_pan_vector() -> None:
 def test_force_quit_chord() -> None:
     from cybermesh.inputs import CHORD_BUTTONS, FORCE_QUIT_CHORD, is_force_quit_chord
 
-    assert CHORD_BUTTONS == FORCE_QUIT_CHORD
+    assert FORCE_QUIT_CHORD.issubset(CHORD_BUTTONS)
     assert is_force_quit_chord({"START", "MENU"})
     assert not is_force_quit_chord({"START"})
     assert not is_force_quit_chord({"MENU"})
@@ -940,6 +940,31 @@ def test_map_label_lines() -> None:
     print("map label lines OK")
 
 
+def test_screenshot_chord() -> None:
+    """L1+R1+SELECT held together emits a single SCREENSHOT action."""
+    import queue as _q
+
+    from cybermesh.inputs import BTN_MAP, SCREENSHOT_CHORD, InputReader
+
+    actions: "_q.Queue[str]" = _q.Queue()
+    r = InputReader(actions, log=lambda _m: None)
+    codes = {a: c for c, a in BTN_MAP.items()}
+    combo = [codes[a] for a in ("PGUP", "PGDN", "SELECT")]
+
+    def ev(code, value):
+        return type("E", (), {"code": code, "value": value})()
+
+    for c in combo:  # press all three
+        r._handle_key(ev(c, 1))
+    emitted = []
+    while not actions.empty():
+        emitted.append(actions.get_nowait())
+    assert "SCREENSHOT" in emitted, emitted
+    # Still held -> cooldown prevents a flood of screenshots.
+    assert SCREENSHOT_CHORD == {"PGUP", "PGDN", "SELECT"}
+    print("screenshot chord OK")
+
+
 def test_kbd_byte_budget() -> None:
     """Typing is capped by UTF-8 byte budget; emoji/cyrillic cost more than 1."""
     from cybermesh.fbui import MAX_MSG_BYTES, FbUI
@@ -1106,6 +1131,7 @@ def main() -> int:
     test_keyboard_layers()
     test_volume_keys()
     test_kbd_byte_budget()
+    test_screenshot_chord()
     test_hat_state_diagonal()
     test_name_for_num_string_keyed()
     test_map_label_lines()

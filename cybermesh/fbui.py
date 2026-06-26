@@ -206,6 +206,7 @@ class FbUI:
         self.settings_sel = 0
         self.settings_scroll = 0
         self.settings_return = "chat"
+        self._last_frame = None
         self.backlight = Backlight(log=log)
         self.sysaudio = SystemVolume(log=log)
 
@@ -269,6 +270,21 @@ class FbUI:
         self.status = text
         self.status_until = time.time() + seconds
         self._dirty = True
+
+    def _save_screenshot(self) -> None:
+        img = getattr(self, "_last_frame", None)
+        if img is None:
+            return
+        try:
+            shots = self.port_dir / "screenshots"
+            shots.mkdir(parents=True, exist_ok=True)
+            path = shots / time.strftime("cybermesh-%Y%m%d-%H%M%S.png")
+            img.convert("RGB").save(path)
+            self.log(f"screenshot saved: {path}")
+            self.set_status(t("status.screenshot", name=path.name), 3)
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"screenshot failed: {exc}")
+            self.set_status(t("status.screenshot_err", err=str(exc)[:40]), 3)
 
     def _send_mark(self, msg: ChatMessage) -> str:
         if not msg.from_me:
@@ -617,6 +633,9 @@ class FbUI:
         if action == "SCREEN_OFF":
             self.backlight.toggle()
             self._dirty = not self.backlight.is_off
+            return
+        if action == "SCREENSHOT":
+            self._save_screenshot()
             return
         if self.backlight.is_off:
             self.backlight.on()
@@ -1505,6 +1524,7 @@ class FbUI:
             self._draw_kbd(d)
 
         self._draw_footer(d)
+        self._last_frame = img
         self.screen.present(img.tobytes("raw", self.screen.raw_mode))
 
     def _draw_footer(self, d: ImageDraw.ImageDraw) -> None:

@@ -55,8 +55,10 @@ for _code in _menu_code_overrides():
     BTN_MAP[_code] = "MENU"
 
 DIR_ACTIONS = frozenset({"UP", "DOWN", "LEFT", "RIGHT"})
-CHORD_BUTTONS = frozenset({"START", "MENU"})
 FORCE_QUIT_CHORD = frozenset({"START", "MENU"})
+# L1 + R1 + SELECT held together -> capture a screenshot.
+SCREENSHOT_CHORD = frozenset({"PGUP", "PGDN", "SELECT"})
+CHORD_BUTTONS = frozenset({"START", "MENU"}) | SCREENSHOT_CHORD
 STICK_DEADZONE = 0.14
 
 # Linux KEY_POWER and friends (gpio-keys on handhelds).
@@ -204,6 +206,7 @@ class InputReader:
         self._threads: List[threading.Thread] = []
         self._stop = threading.Event()
         self._last_screen_off = 0.0
+        self._last_screenshot = 0.0
         self._lock = threading.Lock()
         self._held_chord: Set[str] = set()
         self._hat_x = 0
@@ -327,8 +330,18 @@ class InputReader:
                 self._held_chord.add(action)
             else:
                 self._held_chord.discard(action)
-            if is_force_quit_chord(self._held_chord):
-                self._force_quit()
+            held = set(self._held_chord)
+        if is_force_quit_chord(held):
+            self._force_quit()
+        if SCREENSHOT_CHORD.issubset(held):
+            self._maybe_screenshot()
+
+    def _maybe_screenshot(self) -> None:
+        now = time.time()
+        if now - self._last_screenshot < 1.0:
+            return
+        self._last_screenshot = now
+        self._emit("SCREENSHOT")
 
     def _force_quit(self) -> None:
         self.log("FORCE QUIT: START+MENU")

@@ -44,6 +44,8 @@ _CATALOG = {
     "hud.volume": {"en": "VOL {pct}%", "ru": "ЗВ {pct}%"},
     "hud.battery": {"en": "BAT {pct}%{chg}", "ru": "БАТ {pct}%{chg}"},
     "status.map_theme": {"en": "Map: {theme}", "ru": "Карта: {theme}"},
+    "status.screenshot": {"en": "Screenshot: {name}", "ru": "Скриншот: {name}"},
+    "status.screenshot_err": {"en": "Screenshot failed: {err}", "ru": "Ошибка скриншота: {err}"},
     # --- send results ---
     "send.sending": {"en": "Sending…", "ru": "Отправка…"},
     "send.error": {"en": "Error: {err}", "ru": "Ошибка: {err}"},
