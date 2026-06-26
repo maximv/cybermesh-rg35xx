@@ -106,6 +106,21 @@ KBD_LAYERS = [
 # Meshtastic carries text in a single Data payload (max 237 bytes). Emoji and
 # Cyrillic take several UTF-8 bytes each, so the budget is counted in bytes.
 MAX_MSG_BYTES = 237
+
+# The UI palette is very dark (a CRT/cyberpunk look that reads well on the
+# device LCD). On a desktop sRGB monitor those near-black tones collapse to
+# flat black, hiding the stylish grid/scanline background. Lift shadows with a
+# gamma curve only when exporting screenshots so the saved PNG looks like the
+# device — the live display is untouched.
+_SCREENSHOT_GAMMA = 0.7
+
+
+def _screenshot_enhance(img):
+    lut = [min(255, int(((i / 255.0) ** _SCREENSHOT_GAMMA) * 255 + 0.5)) for i in range(256)]
+    try:
+        return img.point(lut * len(img.getbands()))
+    except Exception:  # noqa: BLE001
+        return img
 _PRELOAD_DOTS = (".", "..", "...")
 ROLE_CYCLE = [1, 2, 0]  # PRIMARY, SECONDARY, DISABLED
 ROLE_LABELS = {0: "OFF", 1: "PRIMARY", 2: "SECONDARY"}
@@ -279,7 +294,7 @@ class FbUI:
             shots = self.port_dir / "screenshots"
             shots.mkdir(parents=True, exist_ok=True)
             path = shots / time.strftime("cybermesh-%Y%m%d-%H%M%S.png")
-            img.convert("RGB").save(path)
+            _screenshot_enhance(img.convert("RGB")).save(path)
             self.log(f"screenshot saved: {path}")
             self.set_status(t("status.screenshot", name=path.name), 3)
         except Exception as exc:  # noqa: BLE001

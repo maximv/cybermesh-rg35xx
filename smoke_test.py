@@ -940,6 +940,26 @@ def test_map_label_lines() -> None:
     print("map label lines OK")
 
 
+def test_screenshot_enhance() -> None:
+    """Screenshot export lifts the very dark background so the grid is visible."""
+    from PIL import Image
+
+    from cybermesh.fbui import _screenshot_enhance
+
+    img = Image.new("RGB", (4, 4), (6, 4, 14))   # COL_BG
+    img.putpixel((0, 0), (14, 8, 28))            # COL_BG_LINE
+    out = _screenshot_enhance(img)
+    bg = out.getpixel((1, 1))
+    line = out.getpixel((0, 0))
+    # Shadows lifted, and the grid line is now clearly brighter than the bg.
+    assert bg[0] > 6
+    assert line[0] - bg[0] >= 10, (bg, line)
+    # Bright accents stay near the top of the range (not blown out oddly).
+    white = _screenshot_enhance(Image.new("RGB", (1, 1), (255, 255, 255))).getpixel((0, 0))
+    assert white == (255, 255, 255)
+    print("screenshot enhance OK")
+
+
 def test_screenshot_chord() -> None:
     """L1+R1+SELECT held together emits a single SCREENSHOT action."""
     import queue as _q
@@ -1131,6 +1151,7 @@ def main() -> int:
     test_keyboard_layers()
     test_volume_keys()
     test_kbd_byte_budget()
+    test_screenshot_enhance()
     test_screenshot_chord()
     test_hat_state_diagonal()
     test_name_for_num_string_keyed()
