@@ -1453,6 +1453,23 @@ def run_fbui(radio: RadioManager, port_dir: Path, log=print) -> int:
         log_exception("SdlScreen init failed")
         return 1
 
+    from .fonts import Fonts
+    from .splash import play_radar_splash
+
+    fonts: Optional[Fonts] = None
+    try:
+        fonts = Fonts()
+        play_radar_splash(
+            screen,
+            fonts,
+            unfold=True,
+            duration=1.8,
+            phase_text="INITIALIZING UPLINK",
+            pump=screen.pump,
+        )
+    except Exception:  # noqa: BLE001
+        log_exception("boot splash failed")
+
     actions: "queue.Queue[str]" = queue.Queue()
 
     from .inputs import InputReader
@@ -1474,6 +1491,18 @@ def run_fbui(radio: RadioManager, port_dir: Path, log=print) -> int:
     finally:
         boot_write("run_fbui: shutdown begin")
         reader.stop()
+        try:
+            if fonts is not None:
+                play_radar_splash(
+                    screen,
+                    fonts,
+                    unfold=False,
+                    duration=1.4,
+                    phase_text="LINK DOWN",
+                    pump=screen.pump,
+                )
+        except Exception:  # noqa: BLE001
+            log_exception("shutdown splash failed")
         try:
             screen.close()
         except Exception:  # noqa: BLE001

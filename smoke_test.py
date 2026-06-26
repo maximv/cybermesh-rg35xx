@@ -450,6 +450,32 @@ def test_ble_device() -> None:
     print("BleDevice OK")
 
 
+def test_splash_radar() -> None:
+    from PIL import Image, ImageDraw
+
+    from cybermesh_mvp.splash import _smoothstep, draw_radar_frame
+
+    assert _smoothstep(0.0) == 0.0
+    assert _smoothstep(1.0) == 1.0
+    assert 0.0 < _smoothstep(0.5) < 1.0
+
+    class _Fonts:
+        def draw(self, d, pos, text, color, size):
+            pass
+
+        def length(self, text, size):
+            return len(text) * 7
+
+    img = Image.new("RGBA", (640, 480), (0, 0, 0, 255))
+    d = ImageDraw.Draw(img)
+    e0 = draw_radar_frame(d, 640, 480, 0.0, unfold=True, fonts=_Fonts())
+    e1 = draw_radar_frame(d, 640, 480, 1.0, unfold=True, fonts=_Fonts())
+    assert e0 < e1
+    ef = draw_radar_frame(d, 640, 480, 1.0, unfold=False, fonts=_Fonts())
+    assert ef < e1
+    print("splash radar OK")
+
+
 def test_map_pan_vector() -> None:
     from cybermesh_mvp.inputs import combine_pan_vector, _norm_axis, _norm_hat, _left_stick_for_pan
 
@@ -586,6 +612,7 @@ def main() -> int:
     test_mapview_offline()
     test_msgstore_roundtrip()
     test_ble_device()
+    test_splash_radar()
     test_map_pan_vector()
     print("ALL SMOKE TESTS PASSED")
     return 0
