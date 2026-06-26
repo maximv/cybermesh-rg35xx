@@ -740,6 +740,46 @@ def test_my_node_detail() -> None:
     print("my node detail OK")
 
 
+def test_volume_keys() -> None:
+    """Hardware volume keys emit VOLUP/VOLDOWN (incl. autorepeat)."""
+    import queue as _q
+
+    from cybermesh.inputs import VOLUME_CODES, InputReader
+
+    actions: "_q.Queue[str]" = _q.Queue()
+    r = InputReader(actions, log=lambda _m: None)
+    up = next(c for c, a in VOLUME_CODES.items() if a == "VOLUP")
+    down = next(c for c, a in VOLUME_CODES.items() if a == "VOLDOWN")
+
+    def ev(code, value):
+        return type("E", (), {"code": code, "value": value})()
+
+    r._handle_key(ev(up, 1))
+    r._handle_key(ev(up, 2))      # autorepeat allowed for volume
+    r._handle_key(ev(up, 0))      # release — no emit
+    r._handle_key(ev(down, 1))
+    emitted = []
+    while not actions.empty():
+        emitted.append(actions.get_nowait())
+    assert emitted == ["VOLUP", "VOLUP", "VOLDOWN"], emitted
+    print("volume keys OK")
+
+
+def test_sysinfo_graceful() -> None:
+    """Battery/volume helpers degrade gracefully when sysfs/amixer are absent."""
+    from cybermesh.sysinfo import SystemVolume, read_battery
+
+    bat = read_battery()
+    assert bat is None or (isinstance(bat, tuple) and 0 <= bat[0] <= 100)
+
+    vol = SystemVolume(log=lambda _m: None)
+    # On a dev machine amixer/controls may be missing; must not raise.
+    assert vol.get_volume() is None or 0 <= vol.get_volume() <= 100
+    if not vol.available:
+        assert vol.change(5) is None
+    print("sysinfo graceful OK")
+
+
 def main() -> int:
     test_geo()
     test_radio_routing()
@@ -763,6 +803,8 @@ def main() -> int:
     test_map_pan_vector()
     test_force_quit_chord()
     test_menu_button_single_emit()
+    test_volume_keys()
+    test_sysinfo_graceful()
     test_fixed_position_from_config()
     test_i18n()
     print("ALL SMOKE TESTS PASSED")

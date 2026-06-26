@@ -38,6 +38,10 @@ _CATALOG = {
     "status.no_node_data": {"en": "No node data", "ru": "Нет данных об узле"},
     "status.no_gps_nodes": {"en": "No nodes with GPS", "ru": "Нет узлов с GPS"},
     "status.no_node_selected": {"en": "No node selected", "ru": "Узел не выбран"},
+    "status.volume": {"en": "Volume {pct}%", "ru": "Громкость {pct}%"},
+    "status.volume_na": {"en": "Volume control unavailable", "ru": "Громкость недоступна"},
+    "hud.volume": {"en": "VOL {pct}%", "ru": "ЗВ {pct}%"},
+    "hud.battery": {"en": "BAT {pct}%{chg}", "ru": "БАТ {pct}%{chg}"},
     "status.map_theme": {"en": "Map: {theme}", "ru": "Карта: {theme}"},
     # --- send results ---
     "send.sending": {"en": "Sending…", "ru": "Отправка…"},

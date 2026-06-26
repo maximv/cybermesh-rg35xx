@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 from .backlight import Backlight
 from .fonts import Fonts
 from .geo import format_distance
+from .sysinfo import SystemVolume, read_battery
 from .mapview import MapView
 from .chat_types import ChatMessage, SEND_FAILED, SEND_PENDING
 from .radio import (
@@ -196,6 +197,14 @@ class FbUI:
         self.map_view = MapView(port_dir / "assets" / "tiles", self.W, self.H)
         self.map_node_idx = -1
         self.backlight = Backlight(log=log)
+        self.sysaudio = SystemVolume(log=log)
+
+        self._chat_follow = True
+        self._volume: Optional[int] = None
+        self._vol_poll_t = 0.0
+        self._bat_pct: Optional[int] = None
+        self._bat_charging = False
+        self._bat_poll_t = 0.0
 
         self.header_h = 34
         self.footer_h = 28
@@ -335,6 +344,36 @@ class FbUI:
             lines.append(reply_line)
         return lines
 
+    VOL_STEP = 5
+
+    def _adjust_volume(self, direction: int) -> None:
+        if not self.sysaudio.available:
+            self.set_status(t("status.volume_na"), 1.5)
+            return
+        newv = self.sysaudio.change(self.VOL_STEP * direction)
+        if newv is not None:
+            self._volume = newv
+            self.set_status(t("status.volume", pct=newv), 1.5)
+
+    def _header_status(self) -> str:
+        now = time.time()
+        if now - self._bat_poll_t > 10.0:
+            self._bat_poll_t = now
+            bat = read_battery()
+            if bat is not None:
+                self._bat_pct, self._bat_charging = bat
+        if now - self._vol_poll_t > 10.0:
+            self._vol_poll_t = now
+            if self.sysaudio.available:
+                self._volume = self.sysaudio.get_volume()
+        parts: List[str] = []
+        if self._volume is not None:
+            parts.append(t("hud.volume", pct=self._volume))
+        if self._bat_pct is not None:
+            chg = "+" if self._bat_charging else ""
+            parts.append(t("hud.battery", pct=self._bat_pct, chg=chg))
+        return "  ".join(parts)
+
     def _scroll_to_latest(self) -> None:
         msgs = self._current_messages()
         if msgs:
@@ -342,6 +381,7 @@ class FbUI:
         else:
             self.msg_sel = 0
         self.scroll = 0
+        self._chat_follow = True
 
     def _show_chat(self) -> None:
         """Return to the main channel chat, scrolled to the newest message."""
@@ -507,7 +547,7 @@ class FbUI:
             self._refresh_my_node_info()
         if new_messages and self.view in ("chat", "dm"):
             msgs = self._current_messages()
-            if msgs and (msgs[-1].from_me or self.msg_sel >= len(msgs) - 2):
+            if msgs and (self._chat_follow or msgs[-1].from_me or self.msg_sel >= len(msgs) - 2):
                 self._scroll_to_latest()
         if self.view in ("chat", "dm") and state in ("error", "disconnected"):
             self.view = "scan"
@@ -566,6 +606,9 @@ class FbUI:
         if self.backlight.is_off:
             self.backlight.on()
         self._dirty = True
+        if action in ("VOLUP", "VOLDOWN"):
+            self._adjust_volume(1 if action == "VOLUP" else -1)
+            return
         if action not in ("SCREEN_OFF",):
             self._maybe_nav_sound(action)
         if self.view == "kbd" and not self.menu_open:
@@ -579,11 +622,13 @@ class FbUI:
                 self.map_view.zoom_delta(1 if action == "PGDN" else -1)
                 return
             if self.view in ("chat", "dm"):
+                msgs = self._current_messages()
                 step = self._page_step()
                 if action == "PGUP":
                     self.msg_sel = max(0, self.msg_sel - step)
                 else:
-                    self.msg_sel = min(len(self._current_messages()) - 1, self.msg_sel + step)
+                    self.msg_sel = min(len(msgs) - 1, self.msg_sel + step)
+                self._chat_follow = self.msg_sel >= len(msgs) - 1
                 self._ensure_msg_visible()
                 return
             if self.view == "nodeinfo":
@@ -791,9 +836,11 @@ class FbUI:
         self._clamp_msg_sel()
         if action == "UP":
             self.msg_sel = max(0, self.msg_sel - 1)
+            self._chat_follow = self.msg_sel >= len(msgs) - 1
             self._ensure_msg_visible()
         elif action == "DOWN":
             self.msg_sel = min(max(0, len(msgs) - 1), self.msg_sel + 1)
+            self._chat_follow = self.msg_sel >= len(msgs) - 1
             self._ensure_msg_visible()
         elif action in ("X",):
             self._open_keyboard(("channel", self.active_channel) if self.view == "chat"
@@ -1243,7 +1290,7 @@ class FbUI:
         state, error, devices = snap.state, snap.error, snap.devices
         my_lat, my_lon = snap.my_lat, snap.my_lon
 
-        draw_header(d, self.W, self.header_h, self.fonts, header_title(state))
+        draw_header(d, self.W, self.header_h, self.fonts, header_title(state), self._header_status())
 
         if self.menu_open:
             self._draw_menu(d)

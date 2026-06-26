@@ -67,6 +67,14 @@ if ecodes is not None:
         if code is not None:
             POWER_CODES.add(code)
 
+# Hardware volume keys (gpio-keys): KEY_VOLUMEUP=115, KEY_VOLUMEDOWN=114.
+VOLUME_CODES: Dict[int, str] = {115: "VOLUP", 114: "VOLDOWN"}
+if ecodes is not None:
+    for name, act in (("KEY_VOLUMEUP", "VOLUP"), ("KEY_VOLUMEDOWN", "VOLDOWN")):
+        code = getattr(ecodes, name, None)
+        if code is not None:
+            VOLUME_CODES[code] = act
+
 KEY_MAP: Dict[int, str] = {}
 STICK_AXIS: Dict[int, str] = {}
 if ecodes is not None:
@@ -393,6 +401,11 @@ class InputReader:
         if code in POWER_CODES:
             if value == 1:
                 self._emit("SCREEN_OFF")
+            return
+        if code in VOLUME_CODES:
+            # Allow autorepeat (value 2) so holding the key keeps changing volume.
+            if value in (1, 2):
+                self._emit(VOLUME_CODES[code])
             return
         if code not in KEY_MAP:
             if value == 1:

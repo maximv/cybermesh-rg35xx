@@ -70,7 +70,7 @@ def draw_background(d: ImageDraw.ImageDraw, w: int, h: int) -> None:
 
 
 def draw_header(
-    d: ImageDraw.ImageDraw, w: int, header_h: int, fonts, title: str
+    d: ImageDraw.ImageDraw, w: int, header_h: int, fonts, title: str, status: str = ""
 ) -> None:
     d.rectangle([0, 0, w, header_h], fill=COL_PANEL)
     d.line([(0, header_h - 1), (w, header_h - 1)], fill=COL_ACCENT, width=1)
@@ -81,7 +81,11 @@ def draw_header(
     d.line([(w - 5, 4), (w - 5 - bracket, 4)], fill=COL_ACCENT2, width=2)
     d.line([(w - 5, 4), (w - 5, 4 + bracket)], fill=COL_ACCENT2, width=2)
     fonts.draw(d, (14, 4), title, COL_ACCENT, "large")
-    fonts.draw(d, (w - 120, 10), APP_TAGLINE, COL_ACCENT2, "small")
+    if status:
+        sw = fonts.length(status, "small")
+        fonts.draw(d, (w - 12 - sw, 12), status, COL_TEXT, "small")
+    else:
+        fonts.draw(d, (w - 120, 10), APP_TAGLINE, COL_ACCENT2, "small")
 
 
 def draw_footer_bar(
