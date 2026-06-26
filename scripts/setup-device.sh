@@ -13,10 +13,8 @@ if [ -z "$GIT_URL" ]; then
 fi
 
 pkill -f cybermesh_mvp.main 2>/dev/null || true
-pkill -f meshtastic_mvp.main 2>/dev/null || true
 
-rm -rf "$APP_DIR" "$PORTS_ROOT/Meshtastic"
-rm -f "$PORTS_ROOT/Meshtastic.sh"
+rm -rf "$APP_DIR"
 
 mkdir -p "$PORTS_ROOT"
 git clone "$GIT_URL" "$APP_DIR"

@@ -24,6 +24,7 @@ from .radio import (
     NODE_SORT_MODES,
     RadioManager,
 )
+from .audio import save_sound_enabled
 
 KbdTarget = Tuple[str, int]  # ("channel"|"dm"|"chname"|"psk", index/peer)
 
@@ -115,14 +116,22 @@ def load_presets(port_dir: Path) -> List[str]:
 
 
 class FbUI:
-    def __init__(self, screen, radio: RadioManager, presets: List[str],
-                 port_dir: Path, log=print) -> None:
+    def __init__(
+        self,
+        screen,
+        radio: RadioManager,
+        presets: List[str],
+        port_dir: Path,
+        log=print,
+        sfx=None,
+    ) -> None:
         self.screen = screen
         self.radio = radio
         self.presets = presets
         self.port_dir = port_dir
         self.saved = load_saved_devices(port_dir)
         self.log = log
+        self.sfx = sfx
         self.W = screen.width
         self.H = screen.height
         self.fonts = Fonts(log=log)
@@ -132,10 +141,7 @@ class FbUI:
         self.scroll = 0
         self.menu_open = False
         self.menu_sel = 0
-        self.menu_items = [
-            "Send", "Сообщения", "Узлы", "Каналы", "Карта", "Мой узел",
-            "Rescan", "Disconnect", "Quit",
-        ]
+        self._rebuild_menu()
         self.status = ""
         self.status_until = 0.0
         self.running = True
@@ -167,6 +173,7 @@ class FbUI:
         self.info_return = "chat"
         self.info_title = ""
         self._pre_menu_view = "chat"
+        self._my_node_info = False
         self._auto_scan_done = False
         self.nodes_filter = ""
         self.nodes_sort = NODE_SORT_DEFAULT
@@ -374,6 +381,36 @@ class FbUI:
         self._scroll_to_latest()
         self._ensure_msg_visible()
 
+    def _rebuild_menu(self) -> None:
+        sound = "вкл" if (self.sfx and self.sfx.enabled) else "выкл"
+        self.menu_items = [
+            "Send",
+            "Сообщения",
+            "Узлы",
+            "Каналы",
+            "Карта",
+            "Мой узел",
+            f"Звук: {sound}",
+            "Rescan",
+            "Disconnect",
+            "Quit",
+        ]
+
+    def _toggle_sound(self) -> None:
+        if self.sfx is None:
+            self.set_status("Звук недоступен", 2.5)
+            return
+        on = self.sfx.toggle()
+        save_sound_enabled(self.port_dir, on)
+        self._rebuild_menu()
+        for i, item in enumerate(self.menu_items):
+            if item.startswith("Звук:"):
+                self.menu_sel = i
+                break
+        self.set_status("Звук включён" if on else "Звук выключен", 2.0)
+        if on:
+            self.sfx.nav_click()
+
     def run(self, actions: "queue.Queue[str]", reader=None) -> None:
         self.screen.hide_cursor()
         last_refresh = 0.0
@@ -410,12 +447,15 @@ class FbUI:
     def _drain_radio(self) -> bool:
         changed = False
         new_messages = False
+        state_changed = False
         while True:
             try:
                 ev = self.radio.events.get_nowait()
                 changed = True
                 if ev == "message":
                     new_messages = True
+                elif ev == "state":
+                    state_changed = True
             except Exception:
                 break
         snap = self.radio.snapshot()
@@ -426,6 +466,8 @@ class FbUI:
             self.view = "chat"
             self.active_channel = 0
             self._scroll_to_latest()
+        if state_changed and self.view == "nodeinfo" and self._my_node_info:
+            self._refresh_my_node_info()
         if new_messages and self.view in ("chat", "dm"):
             msgs = self._current_messages()
             if msgs and (msgs[-1].from_me or self.msg_sel >= len(msgs) - 2):
@@ -470,6 +512,15 @@ class FbUI:
         elif self.view == "nodeinfo":
             self._action_nodeinfo(base)
 
+    def _maybe_nav_sound(self, action: str) -> None:
+        if self.sfx is None:
+            return
+        if self.view == "map" and not self.menu_open and action in ("UP", "DOWN", "LEFT", "RIGHT"):
+            return
+        if self.view == "kbd" and not self.menu_open:
+            return
+        self.sfx.play_for_action(action, view=self.view, menu_open=self.menu_open)
+
     def _on_action(self, action: str) -> None:
         if action == "SCREEN_OFF":
             self.backlight.toggle()
@@ -478,9 +529,8 @@ class FbUI:
         if self.backlight.is_off:
             self.backlight.on()
         self._dirty = True
-        if action == "QUIT":
-            self.running = False
-            return
+        if action not in ("SCREEN_OFF",):
+            self._maybe_nav_sound(action)
         if self.view == "kbd" and not self.menu_open:
             self._action_kbd(action)
             return
@@ -528,8 +578,9 @@ class FbUI:
         if action in ("UP", "DOWN") and not self._nav_ok():
             return
 
-        if action == "START":
+        if action in ("START", "MENU"):
             self._pre_menu_view = self.view
+            self._rebuild_menu()
             self.menu_open = True
             self.menu_sel = 0
             return
@@ -562,6 +613,7 @@ class FbUI:
         return max(0, len(self.info_lines) - self._info_rows())
 
     def _open_node_info(self, num: int, ret: str) -> None:
+        self._my_node_info = False
         info = self.radio.get_node(num)
         title = info.short if info else self.radio.short_for_num(num)
         self.info_title = title
@@ -575,10 +627,23 @@ class FbUI:
         self.info_title = short or "Мой узел"
         if long_name and long_name != short:
             self.info_title = f"{short} — {long_name}"
+        self._my_node_info = True
         self.info_lines = self.radio.my_node_detail_lines()
         self.info_return = self._pre_menu_view
         self.scroll = 0
         self.view = "nodeinfo"
+        self.radio.refresh_position()
+
+    def _refresh_my_node_info(self) -> None:
+        if not self._my_node_info or self.view != "nodeinfo":
+            return
+        short, long_name = self.radio.my_node_labels()
+        title = short or "Мой узел"
+        if long_name and long_name != short:
+            title = f"{short} — {long_name}"
+        self.info_title = title
+        self.info_lines = self.radio.my_node_detail_lines()
+        self._dirty = True
 
     def _action_menu(self, action: str) -> None:
         n = len(self.menu_items)
@@ -588,7 +653,7 @@ class FbUI:
             self.menu_sel = (self.menu_sel + 1) % n
         elif action in ("A",):
             self._activate_menu()
-        elif action in ("B", "START"):
+        elif action in ("B", "START", "MENU"):
             self.menu_open = False
 
     def _activate_menu(self) -> None:
@@ -617,6 +682,9 @@ class FbUI:
             self._dirty = True
         elif item == "Мой узел":
             self._open_my_node_info()
+        elif item.startswith("Звук:"):
+            self._toggle_sound()
+            self.menu_open = True
         elif item in ("Rescan", "Disconnect"):
             self.radio.disconnect()
             self.view = "scan"
@@ -1010,6 +1078,8 @@ class FbUI:
         self._clear_kbd_reply()
 
     def _action_kbd(self, action: str) -> None:
+        if self.sfx is not None:
+            self.sfx.play_kbd_action(action)
         grid = self._kbd_grid()
         if action == "UP":
             self.kbd_row = (self.kbd_row - 1) % len(grid)
@@ -1096,7 +1166,7 @@ class FbUI:
         elif self.view == "kbd":
             text = "A:ввод X:проб B:Backsp Y:слой L1:Shift Start:OK Select:Отмена"
         elif self.view == "chat":
-            text = "↑↓:выбор L1/L2:стр L2/R2:канал X:писать A:действ Y:узлы Start:меню"
+            text = "↑↓:выбор L1/L2:стр L2/R2:канал X:писать A:действ Y:узлы Start/M:меню"
         elif self.view == "dm":
             text = "↑↓:выбор L1/L2:стр X:писать A:ответ B:назад"
         elif self.view == "map":
@@ -1114,7 +1184,7 @@ class FbUI:
         elif self.view == "nodeinfo":
             text = "L1/L2:стр B:назад"
         else:
-            text = "A:OK B:Назад X:Клав Y:Узлы Start:Меню Select:Скан"
+            text = "A:OK B:Назад X:Клав Y:Узлы Start/M:Меню Select:Скан"
         draw_footer_bar(d, self.W, self.H, self.footer_h, self.fonts, text)
 
     def _draw_scan(self, d, state, error, scanned) -> None:
@@ -1453,8 +1523,12 @@ def run_fbui(radio: RadioManager, port_dir: Path, log=print) -> int:
         log_exception("SdlScreen init failed")
         return 1
 
+    from .audio import SfxPlayer
     from .fonts import Fonts
     from .splash import play_radar_splash
+
+    sfx = SfxPlayer(log=log, port_dir=port_dir)
+    sfx.modem_connect()
 
     fonts: Optional[Fonts] = None
     try:
@@ -1474,14 +1548,14 @@ def run_fbui(radio: RadioManager, port_dir: Path, log=print) -> int:
 
     from .inputs import InputReader
 
-    reader = InputReader(actions, log=log)
+    reader = InputReader(actions, log=log, port_dir=port_dir)
     reader.start()
     log("run_fbui: input reader started")
 
     exit_code = 0
     try:
         log("run_fbui: creating FbUI")
-        ui = FbUI(screen, radio, presets, port_dir, log=log)
+        ui = FbUI(screen, radio, presets, port_dir, log=log, sfx=sfx)
         log("run_fbui: entering main loop")
         ui.run(actions, reader=reader)
         log("run_fbui: main loop ended")
@@ -1491,6 +1565,7 @@ def run_fbui(radio: RadioManager, port_dir: Path, log=print) -> int:
     finally:
         boot_write("run_fbui: shutdown begin")
         reader.stop()
+        sfx.modem_disconnect()
         try:
             if fonts is not None:
                 play_radar_splash(

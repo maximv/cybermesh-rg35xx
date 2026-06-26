@@ -450,6 +450,38 @@ def test_ble_device() -> None:
     print("BleDevice OK")
 
 
+def test_audio_synth() -> None:
+    from pathlib import Path
+    import tempfile
+
+    from cybermesh_mvp.audio import (
+        SfxPlayer,
+        _gen_click_wav,
+        load_sound_enabled,
+        save_sound_enabled,
+        synth_modem_connect,
+        synth_modem_disconnect,
+    )
+
+    assert len(_gen_click_wav(800.0, 0.02, 0.1)) > 500
+    assert len(synth_modem_connect()) > 50000
+    assert len(synth_modem_disconnect()) > 20000
+    with tempfile.TemporaryDirectory() as td:
+        port = Path(td)
+        save_sound_enabled(port, False)
+        assert load_sound_enabled(port) is False
+        save_sound_enabled(port, True)
+        assert load_sound_enabled(port) is True
+        p = SfxPlayer(log=lambda _m: None, port_dir=port)
+        assert p.enabled == bool(p._aplay)
+        if p._aplay:
+            p.set_enabled(False)
+            assert p.enabled is False
+    p2 = SfxPlayer(log=lambda _m: None)
+    assert p2.enabled or not p2._aplay
+    print("audio synth OK")
+
+
 def test_splash_radar() -> None:
     from PIL import Image, ImageDraw
 
@@ -488,17 +520,28 @@ def test_map_pan_vector() -> None:
     assert _norm_hat(2) == 1
     # D-pad up (hat_y=-1) inverted on map
     vx, vy = combine_pan_vector(0, -1, {})
-    assert vy > 0
+    assert vx > 0
     # RG35xx left stick: ABS_Z vertical, ABS_RX horizontal (pro layout)
     vx, vy = combine_pan_vector(0, 0, {"lz": 0.8, "lw": 0.0})
-    assert vy < 0
+    assert vx < 0
     vx, vy = combine_pan_vector(0, 0, {"lz": 0.0, "lw": 0.8})
-    assert vx > 0.4
+    assert vy > 0.4
     # Right stick ignored for pan
     stick_v, stick_h = _left_stick_for_pan({"rx": 0.9, "ry": 0.9, "lw": 0.8, "lz": 0.0})
     assert abs(stick_h) > 0.5
     assert abs(stick_v) < 0.01
     print("map pan vector OK")
+
+
+def test_force_quit_chord() -> None:
+    from cybermesh_mvp.inputs import CHORD_BUTTONS, FORCE_QUIT_CHORD, is_force_quit_chord
+
+    assert CHORD_BUTTONS == FORCE_QUIT_CHORD
+    assert is_force_quit_chord({"START", "MENU"})
+    assert not is_force_quit_chord({"START"})
+    assert not is_force_quit_chord({"MENU"})
+    assert not is_force_quit_chord(set())
+    print("force quit chord OK")
 
 
 def test_device_fixed_gps_from_my_node_info() -> None:
@@ -612,8 +655,10 @@ def main() -> int:
     test_mapview_offline()
     test_msgstore_roundtrip()
     test_ble_device()
+    test_audio_synth()
     test_splash_radar()
     test_map_pan_vector()
+    test_force_quit_chord()
     print("ALL SMOKE TESTS PASSED")
     return 0
 

@@ -34,7 +34,7 @@ cat <<EOF
 Dependencies installed in: $PYLIBS
 
 Test import:
-  PYTHONPATH=$PYLIBS python3 -c "import pygame, meshtastic; print('OK')"
+  PYTHONPATH=$PYLIBS python3 -c "import PIL; print('OK')"
 
 Before first BLE connect, pair the Heltec once (replace MAC):
 

@@ -1,6 +1,6 @@
 # Cybermesh
 
-BLE-клиент Meshtastic для Anbernic RG35xx (640×480, SDL mali).
+BLE-клиент для Anbernic RG35xx (640×480, SDL mali).
 
 Репозиторий: [github.com/maximv/cybermesh-rg35xx](https://github.com/maximv/cybermesh-rg35xx)
 
@@ -34,7 +34,7 @@ python3 smoke_test.py
   https://github.com/maximv/cybermesh-rg35xx.git
 ```
 
-Скрипт удалит старые `Meshtastic/` / `Cybermesh/`, сделает `git clone`, установит зависимости и положит `Cybermesh.sh` в меню PORTS.
+Скрипт удалит старый `Cybermesh/`, сделает `git clone`, установит зависимости и положит `Cybermesh.sh` в меню PORTS.
 
 ## Anbernic: обновление
 
@@ -58,7 +58,7 @@ cd /mnt/mmc/Roms/PORTS/Cybermesh
 ./install_deps.sh          # полная переустановка pylibs/
 ```
 
-Требуется `python3` и `pip`. Пакет `meshtastic[ble]` ставится в `pylibs/` (exFAT-safe, без venv).
+Требуется `python3` и `pip`. Зависимости ставятся в `pylibs/` (exFAT-safe, без venv).
 
 ## CI
 

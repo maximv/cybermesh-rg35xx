@@ -20,7 +20,7 @@ _hash_req() {
 _pylibs_ok() {
   [ -d "$PYLIBS" ] || return 1
   [ -n "$(ls -A "$PYLIBS" 2>/dev/null || true)" ] || return 1
-  PYTHONPATH="$PYLIBS" python3 -c "import meshtastic" >/dev/null 2>&1 || return 1
+  PYTHONPATH="$PYLIBS" python3 -c "import PIL" >/dev/null 2>&1 || return 1
   return 0
 }
 

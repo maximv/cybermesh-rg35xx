@@ -1526,7 +1526,7 @@ class RadioManager:
 
     def my_node_detail_lines(self) -> List[str]:
         iface = self._iface()
-        self.refresh_position(sync=True)
+        self._update_own_position()
         num = self.my_num
         if iface is not None and num is None:
             num = self._my_node_num(iface)

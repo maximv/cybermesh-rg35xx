@@ -26,4 +26,5 @@ meshtastic.pid
 
 # Local overrides
 position.txt
+sound.txt
 messages/

@@ -1,7 +1,8 @@
 """Gamepad / keyboard input via evdev -> high level action queue.
 
-Actions: UP DOWN LEFT RIGHT A B X Y START SELECT PGUP PGDN CHPREV CHNEXT SCREEN_OFF QUIT
+Actions: UP DOWN LEFT RIGHT A B X Y START SELECT MENU PGUP PGDN CHPREV CHNEXT SCREEN_OFF
 Map pan: poll InputReader.map_pan_vector() while the map view is open.
+Hold START+MENU together to force-quit (works even if the UI thread is hung).
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import os
 import queue
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 try:
@@ -32,10 +34,12 @@ BTN_MAP: Dict[int, str] = {
     311: "START",
     314: "CHPREV",  # L2
     315: "CHNEXT",  # R2
-    316: "QUIT",    # MODE/guide if present
+    316: "MENU",    # M / MODE
 }
 
 DIR_ACTIONS = frozenset({"UP", "DOWN", "LEFT", "RIGHT"})
+CHORD_BUTTONS = frozenset({"START", "MENU"})
+FORCE_QUIT_CHORD = frozenset({"START", "MENU"})
 STICK_DEADZONE = 0.14
 
 # Linux KEY_POWER and friends (gpio-keys on handhelds).
@@ -58,6 +62,9 @@ if ecodes is not None:
         ecodes.KEY_ESC: "B",
         ecodes.KEY_SPACE: "A",
     }
+    key_menu = getattr(ecodes, "KEY_MENU", None)
+    if key_menu is not None:
+        KEY_MAP[key_menu] = "MENU"
     for attr, name in (
         ("ABS_X", "lx"),
         ("ABS_Y", "ly"),
@@ -116,6 +123,10 @@ def _left_stick_for_pan(sticks: Dict[str, float]) -> Tuple[float, float]:
     return vertical, horizontal
 
 
+def is_force_quit_chord(held: Set[str]) -> bool:
+    return FORCE_QUIT_CHORD.issubset(held)
+
+
 def combine_pan_vector(
     hat_x: int,
     hat_y: int,
@@ -145,8 +156,11 @@ def combine_pan_vector(
         vx = -float(hx) + stick_h
         vy = -float(hy) + stick_v
     else:
-        vx = -float(hx) + stick_h
-        vy = -float(hy) - stick_v
+        # RG35xx: pan() applies (dx,dy)=(vy,vx) from this vector — compensate here.
+        want_dx = -float(hx) + stick_h
+        want_dy = -float(hy) - stick_v
+        vx = want_dy
+        vy = want_dx
 
     mag = math.hypot(vx, vy)
     if mag > 1.0:
@@ -156,14 +170,20 @@ def combine_pan_vector(
 
 
 class InputReader:
-    def __init__(self, actions: "queue.Queue[str]", log: Callable[[str], None] = print) -> None:
+    def __init__(
+        self,
+        actions: "queue.Queue[str]",
+        log: Callable[[str], None] = print,
+        port_dir: Optional[Path] = None,
+    ) -> None:
         self.actions = actions
         self.log = log
+        self._port_dir = port_dir
         self._threads: List[threading.Thread] = []
         self._stop = threading.Event()
-        self._started_at = time.time()
         self._last_screen_off = 0.0
         self._lock = threading.Lock()
+        self._held_chord: Set[str] = set()
         self._hat_x = 0
         self._hat_y = 0
         self._sticks: Dict[str, float] = {
@@ -245,9 +265,29 @@ class InputReader:
             if now - self._last_screen_off < 0.4:
                 return
             self._last_screen_off = now
-        if action == "QUIT" and time.time() - self._started_at < 1.0:
-            return
         self.actions.put(action)
+
+    def _track_chord(self, action: str, pressed: bool) -> None:
+        if action not in CHORD_BUTTONS:
+            return
+        with self._lock:
+            if pressed:
+                self._held_chord.add(action)
+            else:
+                self._held_chord.discard(action)
+            if is_force_quit_chord(self._held_chord):
+                self._force_quit()
+
+    def _force_quit(self) -> None:
+        self.log("FORCE QUIT: START+MENU")
+        if self._port_dir is not None:
+            try:
+                from .logutil import release_pidfile
+
+                release_pidfile(self._port_dir)
+            except Exception:  # noqa: BLE001
+                pass
+        os._exit(2)
 
     def _set_held_dir(self, action: str, pressed: bool) -> None:
         if action not in DIR_ACTIONS:
@@ -322,8 +362,10 @@ class InputReader:
         code = event.code
         pressed = event.value != 0
         if code in BTN_MAP:
+            action = BTN_MAP[code]
+            self._track_chord(action, pressed)
             if pressed:
-                self._emit(BTN_MAP[code])
+                self._emit(action)
             return
         if code in POWER_CODES:
             if pressed:
@@ -334,6 +376,7 @@ class InputReader:
         action = KEY_MAP[code]
         if action in DIR_ACTIONS:
             self._set_held_dir(action, pressed)
+        self._track_chord(action, pressed)
         if pressed:
             self._emit(action)
 
