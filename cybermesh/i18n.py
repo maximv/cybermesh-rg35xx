@@ -79,6 +79,7 @@ _CATALOG = {
     "ctx.cancel": {"en": "Cancel", "ru": "Отмена"},
     "ctx.fav_add": {"en": "Favorite", "ru": "В избранное"},
     "ctx.fav_del": {"en": "Unfavorite", "ru": "Убрать из избранного"},
+    "ctx.resend": {"en": "Resend", "ru": "Отправить повторно"},
     "ctx.title": {"en": "Action", "ru": "Действие"},
     # --- scan ---
     "scan.searching_bt": {"en": "Searching Bluetooth", "ru": "Поиск Bluetooth"},

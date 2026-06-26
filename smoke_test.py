@@ -344,6 +344,29 @@ def test_send_status() -> None:
     print("send status OK")
 
 
+def test_drop_message() -> None:
+    """drop_message removes only the given instance (used to retry a failed send)."""
+    from cybermesh.chat_types import SEND_FAILED
+
+    r = RadioManager()
+    a = ChatMessage(text="ok", sender="me", channel=0, from_me=True)
+    bad = ChatMessage(text="fail", sender="me", channel=0, from_me=True, send_status=SEND_FAILED)
+    r._append_channel(0, a)
+    r._append_channel(0, bad)
+    assert len(r.channel_msgs[0]) == 2
+    r.drop_message(bad)
+    remaining = list(r.channel_msgs[0])
+    assert remaining == [a]
+    assert bad not in remaining
+
+    dm = ChatMessage(text="d", sender="me", is_dm=True, peer_num=0x77, from_me=True,
+                     send_status=SEND_FAILED)
+    r._append_dm(0x77, dm)
+    r.drop_message(dm)
+    assert len(r.dm_msgs.get(0x77, [])) == 0
+    print("drop message OK")
+
+
 def test_reply_label() -> None:
     r = RadioManager()
     r.my_num = 0x1234
@@ -785,6 +808,36 @@ def test_my_node_detail() -> None:
     print("my node detail OK")
 
 
+def test_map_animation() -> None:
+    import time as _t
+    from pathlib import Path
+    import tempfile
+
+    from cybermesh.mapview import MapView
+
+    with tempfile.TemporaryDirectory() as td:
+        mv = MapView(Path(td), 640, 480)
+        # First target with no center yet -> snaps immediately, no animation.
+        mv.animate_to(55.0, 37.0)
+        assert mv._anim_active is False
+        assert abs(mv.center_lat - 55.0) < 1e-9
+        # Next target animates from the current center toward the goal.
+        mv._anim_dur = 0.1
+        mv.animate_to(56.0, 38.0)
+        assert mv._anim_active is True
+        mv.update_anim()
+        assert 55.0 < mv.center_lat < 56.0 or mv._anim_active
+        _t.sleep(0.12)
+        mv.update_anim()
+        assert mv._anim_active is False
+        assert abs(mv.center_lat - 56.0) < 1e-6
+        # Manual pan cancels any animation.
+        mv.animate_to(57.0, 39.0)
+        mv.pan(3, 3)
+        assert mv._anim_active is False
+    print("map animation OK")
+
+
 def test_keyboard_layers() -> None:
     """Every keyboard cell must be exactly one character (incl. the emoji layer)."""
     from cybermesh.fbui import KBD_LAYERS
@@ -872,6 +925,7 @@ def main() -> int:
     test_nodes_by_num_only()
     test_map_anchor()
     test_send_status()
+    test_drop_message()
     test_reply_label()
     test_mapview_offline()
     test_msgstore_roundtrip()
@@ -882,6 +936,7 @@ def main() -> int:
     test_map_pan_vector()
     test_force_quit_chord()
     test_menu_button_single_emit()
+    test_map_animation()
     test_keyboard_layers()
     test_volume_keys()
     test_sysinfo_graceful()

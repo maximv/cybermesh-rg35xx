@@ -1430,6 +1430,18 @@ class RadioManager:
             self._notify("message")
             return err
 
+    def drop_message(self, msg: ChatMessage) -> None:
+        """Remove a specific message instance (used when retrying a failed send)."""
+        store = self.dm_msgs.get(msg.peer_num) if msg.is_dm else self.channel_msgs.get(msg.channel)
+        if store is None:
+            return
+        kept = [m for m in store if m is not msg]
+        if len(kept) != len(store):
+            store.clear()
+            store.extend(kept)
+            self._persist()
+            self._notify("message")
+
     @staticmethod
     def reply_quote(sender: str, text: str) -> str:
         preview = text.replace("\n", " ")[:120]

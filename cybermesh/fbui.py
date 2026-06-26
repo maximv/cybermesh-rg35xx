@@ -496,8 +496,10 @@ class FbUI:
             except queue.Empty:
                 pass
 
-            if reader is not None and self.view == "map" and not self.menu_open and not self.backlight.is_off:
-                if self._map_pan_tick(reader):
+            if self.view == "map" and not self.menu_open and not self.backlight.is_off:
+                if self.map_view.update_anim():
+                    self._dirty = True
+                if reader is not None and self._map_pan_tick(reader):
                     self._dirty = True
 
             if self._drain_radio():
@@ -817,6 +819,7 @@ class FbUI:
         "cancel": "ctx.cancel",
         "fav_add": "ctx.fav_add",
         "fav_del": "ctx.fav_del",
+        "resend": "ctx.resend",
     }
 
     def _ctx_labels(self) -> List[str]:
@@ -858,11 +861,22 @@ class FbUI:
         elif action == "A" and msgs:
             msg = msgs[self.msg_sel]
             if msg.from_me:
+                if msg.send_status in (SEND_FAILED, SEND_PENDING):
+                    self._open_ctx(msg, ["resend", "cancel"], self.view)
                 return
             if self.view == "chat":
                 self._open_ctx(msg, ["reply", "dm", "info", "cancel"], "chat")
             else:
                 self._open_ctx(msg, ["reply", "info", "cancel"], "dm")
+
+    def _resend_message(self, msg: ChatMessage, ret: str) -> None:
+        self.radio.drop_message(msg)
+        self._chat_follow = True
+        if msg.is_dm:
+            peer = msg.peer_num if msg.peer_num is not None else (self.dm_peer or 0)
+            self._do_send(msg.text, "dm", peer, ret, reply_id=msg.reply_id)
+        else:
+            self._do_send(msg.text, "channel", msg.channel, ret, reply_id=msg.reply_id)
 
     def _action_ctx(self, action: str) -> None:
         if action == "UP":
@@ -877,6 +891,10 @@ class FbUI:
             ret = self.ctx_return
             self.view = ret
             if choice == "cancel":
+                return
+            if choice == "resend":
+                if msg is not None:
+                    self._resend_message(msg, ret)
                 return
             if choice == "dm":
                 if msg and msg.sender_num is not None:
@@ -1095,7 +1113,7 @@ class FbUI:
             return
         self.map_node_idx = idx
         n = nodes[idx]
-        self.map_view.center_on(n.lat, n.lon)
+        self.map_view.animate_to(n.lat, n.lon)
         dist = f" {format_distance(n.distance_m)}" if n.distance_m is not None else ""
         self.set_status(f"{n.short}{dist}  {idx + 1}/{len(nodes)}", 3)
 
@@ -1157,8 +1175,8 @@ class FbUI:
         mag = math.hypot(vx, vy)
         if mag < 0.05:
             return False
-        # Speed grows with stick / held direction deflection.
-        speed = 5.0 + 35.0 * min(1.0, mag)
+        # Speed grows with stick / held direction deflection (2x sensitivity).
+        speed = 10.0 + 70.0 * min(1.0, mag)
         dx = int((vx / mag) * speed)
         dy = int((vy / mag) * speed)
         if dx == 0 and dy == 0:
@@ -1740,6 +1758,10 @@ def run_fbui(radio: RadioManager, port_dir: Path, log=print) -> int:
                 )
         except Exception:  # noqa: BLE001
             log_exception("shutdown splash failed")
+        try:
+            sfx.close()
+        except Exception:  # noqa: BLE001
+            pass
         try:
             screen.close()
         except Exception:  # noqa: BLE001
