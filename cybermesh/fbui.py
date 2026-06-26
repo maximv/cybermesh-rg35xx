@@ -103,7 +103,9 @@ KBD_LAYERS = [
     # Single code-point emoji only (so per-cell indexing stays one glyph = one char).
     ("EMO", ["😀😃😄😁😆😅😂🙂😉😊", "😍😘😎🤔😴😭😡👍👎🙏", "🔥💯✨⭐🎉👀💀🚀📡🔋"]),
 ]
-MAX_MSG_LEN = 200
+# Meshtastic carries text in a single Data payload (max 237 bytes). Emoji and
+# Cyrillic take several UTF-8 bytes each, so the budget is counted in bytes.
+MAX_MSG_BYTES = 237
 _PRELOAD_DOTS = (".", "..", "...")
 ROLE_CYCLE = [1, 2, 0]  # PRIMARY, SECONDARY, DISABLED
 ROLE_LABELS = {0: "OFF", 1: "PRIMARY", 2: "SECONDARY"}
@@ -864,9 +866,12 @@ class FbUI:
             self._open_keyboard(("channel", self.active_channel) if self.view == "chat"
                                 else ("dm", self.dm_peer or 0), self.view)
         elif action in ("Y",):
-            self.view = "nodes"
-            self.sel = 0
-            self.scroll = 0
+            if self.view == "dm":
+                self._open_dm_peer_ctx()
+            else:
+                self.view = "nodes"
+                self.sel = 0
+                self.scroll = 0
         elif action == "B":
             if self.view == "dm":
                 self.view = "dms"
@@ -1103,6 +1108,21 @@ class FbUI:
         elif action in ("B",):
             self.nodes_filter = ""
             self._show_chat()
+
+    def _open_dm_peer_ctx(self) -> None:
+        peer = self.dm_peer
+        if peer is None:
+            return
+        info = self.radio.get_node(peer)
+        is_fav = bool(info and info.is_favorite)
+        self.ctx_msg = None
+        fav_item = "fav_del" if is_fav else "fav_add"
+        self.ctx_ids = ["info", fav_item, "cancel"]
+        self.ctx_sel = 0
+        self.ctx_return = "dm"
+        self._ctx_node_num = peer
+        self._ctx_node_favorite = is_fav
+        self.view = "ctx"
 
     def _open_ctx_for_node(self, node) -> None:
         self.ctx_msg = None
@@ -1396,6 +1416,16 @@ class FbUI:
         self.kbd_text = ""
         self._clear_kbd_reply()
 
+    def _kbd_used_bytes(self) -> int:
+        return len(self.kbd_text.encode("utf-8"))
+
+    def _kbd_insert(self, ch: str) -> None:
+        """Append a character only if it fits the UTF-8 byte budget."""
+        if self._kbd_used_bytes() + len(ch.encode("utf-8")) > MAX_MSG_BYTES:
+            self.set_status(t("kbd.full", max=MAX_MSG_BYTES), 1.5)
+            return
+        self.kbd_text += ch
+
     def _action_kbd(self, action: str) -> None:
         if self.sfx is not None:
             self.sfx.play_kbd_action(action)
@@ -1409,8 +1439,7 @@ class FbUI:
         elif action == "RIGHT":
             self.kbd_col = (self.kbd_col + 1) % len(grid[self.kbd_row])
         elif action == "A":
-            if len(self.kbd_text) < MAX_MSG_LEN:
-                self.kbd_text += self._kbd_current_char()
+            self._kbd_insert(self._kbd_current_char())
         elif action == "B":
             if self.kbd_text:
                 self.kbd_text = self.kbd_text[:-1]
@@ -1418,8 +1447,7 @@ class FbUI:
                 self._clear_kbd_reply()
                 self.view = self.kbd_return
         elif action == "X":
-            if len(self.kbd_text) < MAX_MSG_LEN:
-                self.kbd_text += " "
+            self._kbd_insert(" ")
         elif action == "Y":
             self.kbd_layer = (self.kbd_layer + 1) % len(KBD_LAYERS)
             self.kbd_row = 0
@@ -1767,6 +1795,14 @@ class FbUI:
         shift = "ABC" if self.kbd_shift else "abc"
         self.fonts.draw(d, (12, self.header_h + 4),
                         f"{dest} [{layer_name}/{shift}]:", COL_ACCENT, "small")
+
+        if kind in ("channel", "dm"):
+            used = self._kbd_used_bytes()
+            counter = f"{used}/{MAX_MSG_BYTES}"
+            cw = self.fonts.length(counter, "small")
+            ccol = COL_ERR if used >= MAX_MSG_BYTES else (
+                COL_ACCENT2 if used >= MAX_MSG_BYTES - 20 else COL_DIM)
+            self.fonts.draw(d, (self.W - 12 - cw, self.header_h + 4), counter, ccol, "small")
 
         box_y = self.header_h + 24
         d.rectangle([10, box_y, self.W - 10, box_y + 40], fill=COL_PANEL, outline=COL_ACCENT2)

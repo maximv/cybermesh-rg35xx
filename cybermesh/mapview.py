@@ -26,20 +26,25 @@ from .theme import MAP_THEMES
 THEMES = MAP_THEMES
 
 
-def _node_label(n: NodeInfo, max_len: int = 36) -> str:
+def _node_label_lines(n: NodeInfo, max_len: int = 22) -> List[str]:
+    """Stacked label: short name, long name (if different), distance — one per line."""
     short = (n.short or "?").strip()
-    long_name = (n.long or short).strip()
-    if long_name.lower() == short.lower():
-        return short[:max_len]
-    return f"{short} {long_name}"[:max_len]
+    long_name = (n.long or "").strip()
+    lines = [short[:max_len]]
+    if long_name and long_name.lower() != short.lower():
+        lines.append(long_name[:max_len])
+    if n.distance_m is not None:
+        lines.append(format_distance(n.distance_m))
+    return lines
 
 
-def _me_label(short: str, long_name: str, max_len: int = 36) -> str:
+def _me_label_lines(short: str, long_name: str, max_len: int = 22) -> List[str]:
     short = (short or "Я").strip()
-    long_name = (long_name or short).strip()
-    if long_name.lower() == short.lower():
-        return f"Я {short}"[:max_len]
-    return f"Я {short} {long_name}"[:max_len]
+    long_name = (long_name or "").strip()
+    lines = [f"Я {short}"[:max_len]]
+    if long_name and long_name.lower() != short.lower():
+        lines.append(long_name[:max_len])
+    return lines
 
 
 class MapView:
@@ -261,7 +266,8 @@ class MapView:
             me_xy = self._screen_xy(me_lat, me_lon)
             mx, my = me_xy
             d.ellipse([mx - 6, my - 6, mx + 6, my + 6], fill=pal["me"])
-            fonts.draw(d, (mx + 10, my - 8), _me_label(my_short, my_long), pal["text"], "small")
+            self._draw_label_stack(d, fonts, mx + 10, my - 8,
+                                   _me_label_lines(my_short, my_long), pal)
 
         if selected and selected.lat is not None and selected.lon is not None:
             sx, sy = self._screen_xy(selected.lat, selected.lon)
@@ -279,7 +285,22 @@ class MapView:
             col = pal["sel"] if is_sel else pal["node"]
             d.ellipse([px - r, py - r, px + r, py + r], fill=col)
             if is_sel:
-                label = _node_label(n)
-                if n.distance_m is not None:
-                    label += f" {format_distance(n.distance_m)}"
-                fonts.draw(d, (px + 8, py - 8), label, pal["text"], "small")
+                self._draw_label_stack(d, fonts, px + 10, py - 8,
+                                       _node_label_lines(n), pal)
+
+    def _draw_label_stack(self, d, fonts, x: int, y: int, lines, pal) -> None:
+        """Draw label lines stacked vertically; flip to the left near the right edge."""
+        lines = [ln for ln in lines if ln]
+        if not lines:
+            return
+        line_h = 14
+        try:
+            widths = [fonts.length(ln, "small") for ln in lines]
+            box_w = max(widths)
+        except Exception:  # noqa: BLE001
+            box_w = max(len(ln) for ln in lines) * 7
+        if x + box_w > self.W - 4:
+            x = max(4, x - box_w - 18)
+        y = max(2, min(y, self.map_h - line_h * len(lines) - 2))
+        for i, ln in enumerate(lines):
+            fonts.draw(d, (x, y + i * line_h), ln, pal["text"], "small")

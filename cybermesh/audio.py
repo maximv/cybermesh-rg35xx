@@ -219,7 +219,8 @@ def synth_modem_disconnect(duration_s: float = 1.15) -> bytes:
 class SfxPlayer:
     """Non-blocking UI sounds (aplay on Linux / ALSA)."""
 
-    _CHUNK = 512  # ~23ms of stream per write (paces to realtime via blocking write)
+    _CHUNK = 256       # ~11.6ms of audio per write
+    _LEAD_CHUNKS = 4   # keep ~46ms of audio in flight; bounds click latency
 
     def __init__(
         self,
@@ -341,6 +342,12 @@ class SfxPlayer:
         if proc is None or proc.stdin is None:
             return
         silence = b"\x00" * (self._CHUNK * 2)
+        # Self-pace at realtime keeping only a small lead in flight. This keeps
+        # the OS pipe (up to 64 KB) and ALSA buffer from filling with silence
+        # ahead of a freshly mixed click, which is what caused multi-second lag.
+        lead_frames = self._CHUNK * self._LEAD_CHUNKS
+        start = time.monotonic()
+        frames = 0
         while not self._stream_stop.is_set():
             with self._lock:
                 if self._buf:
@@ -359,6 +366,15 @@ class SfxPlayer:
                 proc.stdin.flush()
             except Exception:  # noqa: BLE001
                 break
+            frames += self._CHUNK
+            target = start + (frames - lead_frames) / SAMPLE_RATE
+            delay = target - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            elif delay < -0.5:
+                # Fell badly behind (scheduler stall): resync the clock.
+                start = time.monotonic()
+                frames = lead_frames
 
     def _enqueue(self, samples: "array.array") -> None:
         gain = self._volume / 100.0

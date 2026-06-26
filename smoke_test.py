@@ -896,6 +896,85 @@ def test_volume_keys() -> None:
     print("volume keys OK")
 
 
+def test_name_for_num_string_keyed() -> None:
+    """iface.nodes is keyed by '!hex' id strings; name lookup must still resolve."""
+    r = RadioManager()
+
+    class FakeIface:
+        def __init__(self):
+            # Keyed by id string (as real meshtastic does), not by int num.
+            self.nodes = {
+                "!433a1b2c": {"num": 0x433A1B2C,
+                              "user": {"longName": "Base Station", "shortName": "BASE"}},
+                "!00000099": {"num": 0x99, "user": {"shortName": "N99"}},
+            }
+
+    r._interface = FakeIface()
+    # Long name preferred.
+    assert r.name_for_num(0x433A1B2C) == "Base Station"
+    # Falls back to short name when no long name.
+    assert r.name_for_num(0x99) == "N99"
+    # Unknown node -> !hex id.
+    assert r.name_for_num(0x1234) == "!00001234"
+    # short_for_num resolves through the same path.
+    assert r.short_for_num(0x433A1B2C) == "BASE"
+    print("name_for_num string-keyed OK")
+
+
+def test_map_label_lines() -> None:
+    """Map labels stack short/long/distance on separate lines (long names wrap off)."""
+    from cybermesh.mapview import _node_label_lines
+    from cybermesh.radio import NodeInfo
+
+    n = NodeInfo(num=1, node_id="!1", short="BASE", long="Base Station Alpha",
+                 snr=None, battery=None, lat=1.0, lon=2.0, last_heard=None,
+                 distance_m=1234.0)
+    lines = _node_label_lines(n)
+    assert lines[0] == "BASE"
+    assert lines[1] == "Base Station Alpha"
+    assert "m" in lines[2] or "km" in lines[2]
+    # When long == short, only one name line (plus distance).
+    n2 = NodeInfo(num=2, node_id="!2", short="X", long="X", snr=None, battery=None,
+                  lat=1.0, lon=2.0, last_heard=None, distance_m=None)
+    assert _node_label_lines(n2) == ["X"]
+    print("map label lines OK")
+
+
+def test_kbd_byte_budget() -> None:
+    """Typing is capped by UTF-8 byte budget; emoji/cyrillic cost more than 1."""
+    from cybermesh.fbui import MAX_MSG_BYTES, FbUI
+
+    assert "a".encode("utf-8").__len__() == 1
+    assert "я".encode("utf-8").__len__() == 2
+    assert "😀".encode("utf-8").__len__() == 4
+
+    ui = FbUI.__new__(FbUI)  # bypass heavy __init__
+    ui.kbd_text = ""
+    ui._dirty = False
+    ui.status = ""
+    ui.status_until = 0.0
+
+    # Fill to exactly the limit with 1-byte chars.
+    ui.kbd_text = "x" * (MAX_MSG_BYTES - 1)
+    ui._kbd_insert("y")
+    assert ui._kbd_used_bytes() == MAX_MSG_BYTES
+    # Now full: another ASCII char is rejected.
+    ui._kbd_insert("z")
+    assert ui._kbd_used_bytes() == MAX_MSG_BYTES
+
+    # An emoji needs 4 bytes; near the edge it must be rejected, not truncated.
+    ui.kbd_text = "x" * (MAX_MSG_BYTES - 2)
+    ui._kbd_insert("😀")  # would be +4 -> over budget
+    assert "😀" not in ui.kbd_text
+    assert ui._kbd_used_bytes() == MAX_MSG_BYTES - 2
+    # With room, the emoji is accepted and counts as 4 bytes.
+    ui.kbd_text = "x" * (MAX_MSG_BYTES - 4)
+    ui._kbd_insert("😀")
+    assert ui.kbd_text.endswith("😀")
+    assert ui._kbd_used_bytes() == MAX_MSG_BYTES
+    print("kbd byte budget OK")
+
+
 def test_hat_state_diagonal() -> None:
     """hat_state() reports diagonals as a single vector (for one-step node jumps)."""
     import queue as _q
@@ -1026,7 +1105,10 @@ def main() -> int:
     test_map_animation()
     test_keyboard_layers()
     test_volume_keys()
+    test_kbd_byte_budget()
     test_hat_state_diagonal()
+    test_name_for_num_string_keyed()
+    test_map_label_lines()
     test_config_field()
     test_device_settings_owner()
     test_sysinfo_graceful()

@@ -1038,12 +1038,12 @@ class RadioManager:
 
     def _short_for_num(self, num: int) -> str:
         iface = self._iface()
-        if iface is None:
-            return str(num)
-        nodes = getattr(iface, "nodes", None) or {}
-        if num in nodes:
-            user = nodes[num].get("user") or {}
-            return str(user.get("shortName") or user.get("longName") or num)
+        node = self._node_dict_for_num(iface, num) if iface else None
+        if node:
+            user = node.get("user") or {}
+            name = user.get("shortName") or user.get("longName")
+            if name:
+                return str(name)
         return str(num)
 
     def _parse_reply_id(self, decoded: dict) -> Optional[int]:
@@ -2015,16 +2015,14 @@ class RadioManager:
         return self._short_for_num(num)
 
     def _name_for_num(self, num: int) -> str:
-        """Human-readable node name (long name preferred), else a !hex node id."""
+        """Human-readable node name: full (long) name, else short name, else !hex id."""
         iface = self._iface()
-        if iface is not None:
-            nodes = getattr(iface, "nodes", None) or {}
-            node = nodes.get(num)
-            if node:
-                user = node.get("user") or {}
-                name = user.get("longName") or user.get("shortName")
-                if name:
-                    return str(name)
+        node = self._node_dict_for_num(iface, num) if iface else None
+        if node:
+            user = node.get("user") or {}
+            name = user.get("longName") or user.get("shortName")
+            if name:
+                return str(name)
         return f"!{num & 0xffffffff:08x}"
 
     def name_for_num(self, num: int) -> str:

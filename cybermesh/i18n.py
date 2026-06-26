@@ -128,6 +128,7 @@ _CATALOG = {
     "kbd.dest_chname": {"en": "channel name", "ru": "имя канала"},
     "kbd.dest_filter": {"en": "node search", "ru": "поиск узла"},
     "kbd.dest_psk": {"en": "PSK", "ru": "PSK"},
+    "kbd.full": {"en": "Limit {max} bytes reached", "ru": "Достигнут лимит {max} байт"},
     # --- my node ---
     "mynode.title": {"en": "My node", "ru": "Мой узел"},
     "saved.device": {"en": "saved", "ru": "сохранённое"},
@@ -161,8 +162,8 @@ _CATALOG = {
         "ru": "↑↓:выбор L1/L2:стр L2/R2:канал X:писать A:действ Y:узлы Start/M:меню",
     },
     "footer.dm": {
-        "en": "↑↓:select L1/L2:scroll X:write A:reply B:back",
-        "ru": "↑↓:выбор L1/L2:стр X:писать A:ответ B:назад",
+        "en": "↑↓:select L1/L2:scroll X:write A:reply Y:node B:back",
+        "ru": "↑↓:выбор L1/L2:стр X:писать A:ответ Y:узел B:назад",
     },
     "footer.map": {
         "en": "dpad:node stick:pan L1/L2:zoom A:write X:theme Y:me B:back",
