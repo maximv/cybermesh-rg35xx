@@ -63,5 +63,3 @@ cd /mnt/mmc/Roms/PORTS/Cybermesh
 ## CI
 
 На каждый push в GitHub Actions запускается `smoke_test.py`.
-
-Опциональный деплой на Anbernic — см. закомментированный job в `.github/workflows/ci.yml`.
