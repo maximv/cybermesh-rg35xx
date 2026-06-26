@@ -209,8 +209,8 @@ def test_node_detail() -> None:
     r._interface = FakeIface()
     lines = r.node_detail_lines(0x1234)
     assert any("ABC" in ln for ln in lines)
-    assert any("Дистанция:" in ln for ln in lines)
-    assert any("Избранный" in ln for ln in lines)
+    assert any("Distance:" in ln for ln in lines)
+    assert any("Favorite" in ln for ln in lines)
     print("node detail OK")
 
 
@@ -518,14 +518,23 @@ def test_map_pan_vector() -> None:
     assert _norm_axis(1086, -4096, 4096) > 0.1
     assert _norm_hat(-1) == -1
     assert _norm_hat(2) == 1
-    # D-pad up (hat_y=-1) inverted on map
+    # D-pad must NOT be rotated: vertical input -> vy, horizontal input -> vx.
+    # UP (hat_y=-1) pans up (vy>0), no horizontal component.
     vx, vy = combine_pan_vector(0, -1, {})
-    assert vx > 0
-    # RG35xx left stick: ABS_Z vertical, ABS_RX horizontal (pro layout)
+    assert vy > 0 and abs(vx) < 1e-9
+    # DOWN (hat_y=1) pans down.
+    vx, vy = combine_pan_vector(0, 1, {})
+    assert vy < 0 and abs(vx) < 1e-9
+    # LEFT (hat_x=-1) -> vx>0, RIGHT (hat_x=1) -> vx<0; no vertical component.
+    vx, vy = combine_pan_vector(-1, 0, {})
+    assert vx > 0 and abs(vy) < 1e-9
+    vx, vy = combine_pan_vector(1, 0, {})
+    assert vx < 0 and abs(vy) < 1e-9
+    # RG35xx left stick (pro): ABS_Z vertical -> vy, ABS_RX horizontal -> vx.
     vx, vy = combine_pan_vector(0, 0, {"lz": 0.8, "lw": 0.0})
-    assert vx < 0
+    assert vy > 0.4 and abs(vx) < 1e-9
     vx, vy = combine_pan_vector(0, 0, {"lz": 0.0, "lw": 0.8})
-    assert vy > 0.4
+    assert vx > 0.4 and abs(vy) < 1e-9
     # Right stick ignored for pan
     stick_v, stick_h = _left_stick_for_pan({"rx": 0.9, "ry": 0.9, "lw": 0.8, "lz": 0.0})
     assert abs(stick_h) > 0.5
@@ -542,6 +551,100 @@ def test_force_quit_chord() -> None:
     assert not is_force_quit_chord({"MENU"})
     assert not is_force_quit_chord(set())
     print("force quit chord OK")
+
+
+def test_menu_button_single_emit() -> None:
+    """MENU must fire once per press; autorepeat (value=2) must not toggle it."""
+    import queue as _q
+
+    from cybermesh_mvp.inputs import BTN_MAP, InputReader
+
+    actions: "_q.Queue[str]" = _q.Queue()
+    r = InputReader(actions, log=lambda _m: None)
+    code = next(c for c, a in BTN_MAP.items() if a == "MENU")
+
+    def ev(value):
+        return type("E", (), {"code": code, "value": value})()
+
+    r._handle_key(ev(1))   # press
+    r._handle_key(ev(2))   # autorepeat — must be ignored
+    r._handle_key(ev(2))
+    r._handle_key(ev(0))   # release
+    emitted = []
+    while not actions.empty():
+        emitted.append(actions.get_nowait())
+    assert emitted == ["MENU"], emitted
+    print("menu button single emit OK")
+
+
+def test_fixed_position_from_config() -> None:
+    """Fixed GPS on, NodeDB has no own position -> read lat/lon from position config."""
+    from cybermesh_mvp.radio import _read_device_fixed_gps
+
+    class FakePosCfg:
+        fixed_position = True
+        latitude_i = int(59.935 * 1e7)
+        longitude_i = int(30.415 * 1e7)
+
+    class FakeLC:
+        position = FakePosCfg()
+
+    class FakeLocal:
+        localConfig = FakeLC()
+        nodeNum = 0x1234
+
+    class FakeIface:
+        localNode = FakeLocal()
+        nodesByNum = {0x1234: {"num": 0x1234, "user": {"shortName": "HT"}}}  # no position
+
+        def getMyNodeInfo(self):
+            return self.nodesByNum[0x1234]
+
+    lat, lon, rank, fixed = _read_device_fixed_gps(FakeIface())
+    assert fixed is True
+    assert lat is not None and abs(lat - 59.935) < 0.001
+    assert lon is not None and abs(lon - 30.415) < 0.001
+    print("fixed position from config OK")
+
+
+def test_i18n() -> None:
+    from pathlib import Path
+    import tempfile
+
+    from cybermesh_mvp import i18n
+    from cybermesh_mvp.radio import node_sort_label, NODE_SORT_SNR
+
+    prev = i18n.get_language()
+    try:
+        assert i18n.set_language(None) == "en"
+        assert i18n.t("menu.send") == "Send"
+        assert i18n.t("menu.sound", state="on") == "Sound: on"
+        assert i18n.lang_name() == "EN"
+
+        assert i18n.set_language("ru") == "ru"
+        assert i18n.t("menu.send") == "Отправить"
+        assert i18n.lang_name() == "RU"
+        assert node_sort_label(NODE_SORT_SNR) == "сигнал"
+
+        # toggle cycles en<->ru
+        assert i18n.toggle_language() == "en"
+        assert i18n.toggle_language() == "ru"
+
+        # unknown key falls back to the key itself
+        assert i18n.t("does.not.exist") == "does.not.exist"
+        # bad format args don't raise (returns template unformatted)
+        assert isinstance(i18n.t("menu.sound", nope="x"), str)
+
+        with tempfile.TemporaryDirectory() as td:
+            port = Path(td)
+            assert i18n.load_language(port) is None
+            i18n.save_language(port, "ru")
+            assert i18n.load_language(port) == "ru"
+            i18n.save_language(port, "en")
+            assert i18n.load_language(port) == "en"
+    finally:
+        i18n.set_language(prev)
+    print("i18n OK")
 
 
 def test_device_fixed_gps_from_my_node_info() -> None:
@@ -602,8 +705,8 @@ def test_device_fixed_gps_from_my_node_info() -> None:
     assert info is not None
     assert info.lat is not None and abs(info.lat - 59.935) < 0.001
     lines = r.node_detail_lines(0x1234)
-    assert any("Fixed GPS: вкл" in ln for ln in lines)
-    assert any("Широта:" in ln for ln in lines)
+    assert any("Fixed GPS: on" in ln for ln in lines)
+    assert any("Lat:" in ln for ln in lines)
     print("device fixed GPS OK")
 
 
@@ -659,6 +762,9 @@ def main() -> int:
     test_splash_radar()
     test_map_pan_vector()
     test_force_quit_chord()
+    test_menu_button_single_emit()
+    test_fixed_position_from_config()
+    test_i18n()
     print("ALL SMOKE TESTS PASSED")
     return 0
 

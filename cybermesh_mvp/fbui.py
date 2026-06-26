@@ -20,11 +20,19 @@ from .chat_types import ChatMessage, SEND_FAILED, SEND_PENDING
 from .radio import (
     BleDevice,
     NODE_SORT_DEFAULT,
-    NODE_SORT_LABELS,
     NODE_SORT_MODES,
     RadioManager,
+    node_sort_label,
 )
 from .audio import save_sound_enabled
+from .i18n import (
+    lang_name,
+    load_language,
+    save_language,
+    set_language,
+    t,
+    toggle_language,
+)
 
 KbdTarget = Tuple[str, int]  # ("channel"|"dm"|"chname"|"psk", index/peer)
 
@@ -51,7 +59,7 @@ def load_saved_devices(port_dir: Path) -> List[BleDevice]:
             continue
         parts = line.split(None, 1)
         addr = parts[0]
-        name = parts[1] if len(parts) > 1 else "сохранённое"
+        name = parts[1] if len(parts) > 1 else t("saved.device")
         out.append(BleDevice(name=name, address=addr))
     return out
 
@@ -110,7 +118,7 @@ def _with_preloader(text: str) -> str:
 def load_presets(port_dir: Path) -> List[str]:
     path = port_dir / "presets.txt"
     if not path.exists():
-        return ["На связи", "OK"]
+        return [t("preset.online"), "OK"]
     lines = [ln.strip() for ln in _read_text_lines(path)]
     return [ln for ln in lines if ln] or ["OK"]
 
@@ -129,6 +137,7 @@ class FbUI:
         self.radio = radio
         self.presets = presets
         self.port_dir = port_dir
+        set_language(load_language(port_dir))
         self.saved = load_saved_devices(port_dir)
         self.log = log
         self.sfx = sfx
@@ -162,7 +171,7 @@ class FbUI:
         self.kbd_reply_id: Optional[int] = None
         self.kbd_reply_label = ""
 
-        self.ctx_items: List[str] = []
+        self.ctx_ids: List[str] = []
         self.ctx_sel = 0
         self.ctx_msg: Optional[ChatMessage] = None
         self.ctx_return = "chat"
@@ -219,8 +228,7 @@ class FbUI:
         self.nodes_sort = modes[(idx + direction) % len(modes)]
         self.sel = 0
         self.scroll = 0
-        label = NODE_SORT_LABELS.get(self.nodes_sort, self.nodes_sort)
-        self.set_status(f"Сортировка: {label}", 2.5)
+        self.set_status(t("status.sort", label=node_sort_label(self.nodes_sort)), 2.5)
 
     def _clamp_nodes_sel(self) -> None:
         nodes = self._filtered_nodes()
@@ -264,7 +272,7 @@ class FbUI:
         text = text.strip()
         if not text:
             return
-        self.set_status("Отправка…", 60)
+        self.set_status(t("send.sending"), 60)
         self._dirty = True
         if return_view:
             self.view = return_view
@@ -277,15 +285,15 @@ class FbUI:
             else:
                 return
             if err:
-                self.set_status(f"Ошибка: {err[:48]}", 4)
+                self.set_status(t("send.error", err=err[:48]), 4)
             else:
                 preview = text.replace("\n", " ")[:24]
                 if reply_id is not None:
-                    label = "Ответ отправлен"
+                    label = t("send.reply_sent")
                 elif kind == "channel":
-                    label = "Отправлено"
+                    label = t("send.sent")
                 else:
-                    label = "ЛС отправлено"
+                    label = t("send.dm_sent")
                 self.set_status(f"{label}: {preview}", 2.5)
             self._dirty = True
 
@@ -298,7 +306,7 @@ class FbUI:
         return self.H - self.footer_h - 8
 
     def _message_parts(self, msg: ChatMessage) -> Tuple[List[str], Optional[str]]:
-        who = "Вы" if msg.from_me else msg.sender
+        who = t("chat.you") if msg.from_me else msg.sender
         stamp = time.strftime("%H:%M", time.localtime(msg.ts))
         mark = self._send_mark(msg)
         main = self._wrap(f"[{stamp}] {who}: {msg.text}{mark}", self.W - 24)[:2]
@@ -310,7 +318,7 @@ class FbUI:
                 is_dm=msg.is_dm,
                 peer_num=msg.peer_num,
             )
-            reply_line = f"В ответ {name or '?'}"
+            reply_line = t("chat.reply_to", name=name or "?")
         return main, reply_line
 
     def _message_block_h(self, msg: ChatMessage) -> int:
@@ -382,33 +390,57 @@ class FbUI:
         self._ensure_msg_visible()
 
     def _rebuild_menu(self) -> None:
-        sound = "вкл" if (self.sfx and self.sfx.enabled) else "выкл"
-        self.menu_items = [
-            "Send",
-            "Сообщения",
-            "Узлы",
-            "Каналы",
-            "Карта",
-            "Мой узел",
-            f"Звук: {sound}",
-            "Rescan",
-            "Disconnect",
-            "Quit",
+        sound = t("state.on") if (self.sfx and self.sfx.enabled) else t("state.off")
+        self.menu_ids = [
+            "send",
+            "messages",
+            "nodes",
+            "channels",
+            "map",
+            "mynode",
+            "sound",
+            "lang",
+            "rescan",
+            "disconnect",
+            "quit",
         ]
+        self.menu_items = [
+            t("menu.send"),
+            t("menu.messages"),
+            t("menu.nodes"),
+            t("menu.channels"),
+            t("menu.map"),
+            t("menu.mynode"),
+            t("menu.sound", state=sound),
+            t("menu.lang", lang=lang_name()),
+            t("menu.rescan"),
+            t("menu.disconnect"),
+            t("menu.quit"),
+        ]
+
+    def _select_menu_id(self, menu_id: str) -> None:
+        if menu_id in self.menu_ids:
+            self.menu_sel = self.menu_ids.index(menu_id)
 
     def _toggle_sound(self) -> None:
         if self.sfx is None:
-            self.set_status("Звук недоступен", 2.5)
+            self.set_status(t("status.sound_unavailable"), 2.5)
             return
         on = self.sfx.toggle()
         save_sound_enabled(self.port_dir, on)
         self._rebuild_menu()
-        for i, item in enumerate(self.menu_items):
-            if item.startswith("Звук:"):
-                self.menu_sel = i
-                break
-        self.set_status("Звук включён" if on else "Звук выключен", 2.0)
+        self._select_menu_id("sound")
+        self.set_status(t("status.sound_on") if on else t("status.sound_off"), 2.0)
         if on:
+            self.sfx.nav_click()
+
+    def _toggle_language(self) -> None:
+        lang = toggle_language()
+        save_language(self.port_dir, lang)
+        self._rebuild_menu()
+        self._select_menu_id("lang")
+        self.set_status(t("status.lang_set"), 2.0)
+        if self.sfx:
             self.sfx.nav_click()
 
     def run(self, actions: "queue.Queue[str]", reader=None) -> None:
@@ -624,7 +656,7 @@ class FbUI:
 
     def _open_my_node_info(self) -> None:
         short, long_name = self.radio.my_node_labels()
-        self.info_title = short or "Мой узел"
+        self.info_title = short or t("mynode.title")
         if long_name and long_name != short:
             self.info_title = f"{short} — {long_name}"
         self._my_node_info = True
@@ -638,7 +670,7 @@ class FbUI:
         if not self._my_node_info or self.view != "nodeinfo":
             return
         short, long_name = self.radio.my_node_labels()
-        title = short or "Мой узел"
+        title = short or t("mynode.title")
         if long_name and long_name != short:
             title = f"{short} — {long_name}"
         self.info_title = title
@@ -657,40 +689,43 @@ class FbUI:
             self.menu_open = False
 
     def _activate_menu(self) -> None:
-        item = self.menu_items[self.menu_sel]
+        item = self.menu_ids[self.menu_sel]
         self.menu_open = False
-        if item == "Send":
+        if item == "send":
             self.view = "send"
             self.sel = 0
-        elif item == "Сообщения":
+        elif item == "messages":
             self.view = "dms"
             self.sel = 0
             self.scroll = 0
-        elif item == "Узлы":
+        elif item == "nodes":
             self.view = "nodes"
             self.sel = 0
             self.scroll = 0
-        elif item == "Каналы":
+        elif item == "channels":
             self.view = "chcfg"
             self.sel = 0
             self.scroll = 0
-        elif item == "Карта":
+        elif item == "map":
             self.view = "map"
             self.map_node_idx = -1
             self.radio.refresh_position()
             self.map_view._kick_prefetch()
             self._dirty = True
-        elif item == "Мой узел":
+        elif item == "mynode":
             self._open_my_node_info()
-        elif item.startswith("Звук:"):
+        elif item == "sound":
             self._toggle_sound()
             self.menu_open = True
-        elif item in ("Rescan", "Disconnect"):
+        elif item == "lang":
+            self._toggle_language()
+            self.menu_open = True
+        elif item in ("rescan", "disconnect"):
             self.radio.disconnect()
             self.view = "scan"
             self.sel = 0
             self.radio.start_scan()
-        elif item == "Quit":
+        elif item == "quit":
             self.running = False
 
     def _merged_devices(self, scanned: List[BleDevice]) -> List[BleDevice]:
@@ -725,9 +760,21 @@ class FbUI:
             self.scroll = 0
             self.msg_sel = 0
 
-    def _open_ctx(self, msg: ChatMessage, items: List[str], ret: str) -> None:
+    CTX_LABEL_KEYS = {
+        "reply": "ctx.reply",
+        "dm": "ctx.dm",
+        "info": "ctx.info",
+        "cancel": "ctx.cancel",
+        "fav_add": "ctx.fav_add",
+        "fav_del": "ctx.fav_del",
+    }
+
+    def _ctx_labels(self) -> List[str]:
+        return [t(self.CTX_LABEL_KEYS.get(i, i)) for i in self.ctx_ids]
+
+    def _open_ctx(self, msg: ChatMessage, item_ids: List[str], ret: str) -> None:
         self.ctx_msg = msg
-        self.ctx_items = items
+        self.ctx_ids = item_ids
         self.ctx_sel = 0
         self.ctx_return = ret
         self.view = "ctx"
@@ -753,6 +800,7 @@ class FbUI:
                 self.view = "dms"
             else:
                 self._pre_menu_view = self.view
+                self._rebuild_menu()
                 self.menu_open = True
                 self.menu_sel = 0
         elif action == "A" and msgs:
@@ -760,25 +808,25 @@ class FbUI:
             if msg.from_me:
                 return
             if self.view == "chat":
-                self._open_ctx(msg, ["Ответить", "ЛС", "Инфо", "Отмена"], "chat")
+                self._open_ctx(msg, ["reply", "dm", "info", "cancel"], "chat")
             else:
-                self._open_ctx(msg, ["Ответить", "Инфо", "Отмена"], "dm")
+                self._open_ctx(msg, ["reply", "info", "cancel"], "dm")
 
     def _action_ctx(self, action: str) -> None:
         if action == "UP":
             self.ctx_sel = max(0, self.ctx_sel - 1)
         elif action == "DOWN":
-            self.ctx_sel = min(len(self.ctx_items) - 1, self.ctx_sel + 1)
+            self.ctx_sel = min(len(self.ctx_ids) - 1, self.ctx_sel + 1)
         elif action in ("B",):
             self.view = self.ctx_return
         elif action == "A":
-            choice = self.ctx_items[self.ctx_sel]
+            choice = self.ctx_ids[self.ctx_sel]
             msg = self.ctx_msg
             ret = self.ctx_return
             self.view = ret
-            if choice == "Отмена":
+            if choice == "cancel":
                 return
-            if choice == "ЛС":
+            if choice == "dm":
                 if msg and msg.sender_num is not None:
                     self.dm_peer = msg.sender_num
                     self.view = "dm"
@@ -790,17 +838,17 @@ class FbUI:
                     self.msg_sel = 0
                     self.scroll = 0
                 return
-            if choice in ("В избранное", "Убрать из избранного") and self._ctx_node_num is not None:
-                fav = choice == "В избранное"
+            if choice in ("fav_add", "fav_del") and self._ctx_node_num is not None:
+                fav = choice == "fav_add"
                 err = self.radio.set_node_favorite(self._ctx_node_num, fav)
                 if err:
-                    self.set_status(f"Ошибка: {err[:48]}", 4)
+                    self.set_status(t("send.error", err=err[:48]), 4)
                 else:
-                    label = "В избранном" if fav else "Убрано из избранного"
+                    label = t("fav.added") if fav else t("fav.removed")
                     self.set_status(label, 2.5)
                 self.view = self.ctx_return
                 return
-            if choice == "Инфо":
+            if choice == "info":
                 num = self._ctx_node_num
                 if msg and msg.sender_num is not None:
                     num = msg.sender_num
@@ -808,11 +856,11 @@ class FbUI:
                     self._open_node_info(num, ret)
                 else:
                     self.view = ret
-                    self.set_status("Нет данных об узле", 3)
+                    self.set_status(t("status.no_node_data"), 3)
                 return
-            if choice == "Ответить" and msg is not None:
+            if choice == "reply" and msg is not None:
                 if msg.msg_id is not None:
-                    label = f"ответ {msg.sender}"
+                    label = t("reply.label", sender=msg.sender)
                     if ret == "chat":
                         self._open_keyboard(
                             ("channel", self.active_channel),
@@ -873,14 +921,14 @@ class FbUI:
             self.nodes_filter = ""
             self.sel = 0
             self.scroll = 0
-            self.set_status("Фильтр сброшен", 2)
+            self.set_status(t("status.filter_reset"), 2)
         elif action == "X" and nodes:
             node = nodes[self.sel]
             err = self.radio.set_node_favorite(node.num, not node.is_favorite)
             if err:
-                self.set_status(f"Ошибка: {err[:48]}", 4)
+                self.set_status(t("send.error", err=err[:48]), 4)
             else:
-                state = "В избранном" if not node.is_favorite else "Убрано"
+                state = t("fav.added") if not node.is_favorite else t("fav.removed")
                 self.set_status(f"{state}: {node.short}", 2.5)
         elif action == "A" and nodes:
             self._open_ctx_for_node(nodes[self.sel])
@@ -890,8 +938,8 @@ class FbUI:
 
     def _open_ctx_for_node(self, node) -> None:
         self.ctx_msg = None
-        fav_item = "Убрать из избранного" if node.is_favorite else "В избранное"
-        self.ctx_items = ["ЛС", "Инфо", fav_item, "Отмена"]
+        fav_item = "fav_del" if node.is_favorite else "fav_add"
+        self.ctx_ids = ["dm", "info", fav_item, "cancel"]
         self.ctx_sel = 0
         self.ctx_return = "nodes"
         self._ctx_node_num = node.num
@@ -959,12 +1007,12 @@ class FbUI:
             psk = self.ch_edit_psk.encode("utf-8") if self.ch_edit_psk else b""
             err = self.radio.write_channel(self.ch_edit_idx, self.ch_edit_name,
                                            self.ch_edit_role, psk)
-            self.set_status(err or "Канал сохранён", 4 if err else 2.5)
+            self.set_status(err or t("chan.saved"), 4 if err else 2.5)
             self.view = "chcfg"
         elif action == "SELECT":
             if self.ch_edit_idx > 0:
                 err = self.radio.delete_channel(self.ch_edit_idx)
-                self.set_status(err or "Канал удалён", 4 if err else 2.5)
+                self.set_status(err or t("chan.deleted"), 4 if err else 2.5)
             self.view = "chcfg"
         elif action == "B":
             self.view = "chcfg"
@@ -981,7 +1029,7 @@ class FbUI:
     def _cycle_map_node(self, direction: int) -> None:
         nodes = self._map_nodes()
         if not nodes:
-            self.set_status("Нет узлов с GPS", 2)
+            self.set_status(t("status.no_gps_nodes"), 2)
             return
         if self.map_node_idx < 0:
             self.map_node_idx = 0 if direction > 0 else len(nodes) - 1
@@ -1014,8 +1062,8 @@ class FbUI:
                 self.map_view.center_on(lat, lon)
         elif action == "X":
             theme = self.map_view.toggle_theme()
-            name = "светлая" if theme == "light" else "тёмная"
-            self.set_status(f"Карта: {name}", 2)
+            name = t("map.theme_light") if theme == "light" else t("map.theme_dark")
+            self.set_status(t("status.map_theme", theme=name), 2)
         elif action == "B":
             self.view = "chat"
 
@@ -1137,7 +1185,7 @@ class FbUI:
         elif self.view == "dm":
             self._draw_dm(d, state)
         elif self.view == "send":
-            self._draw_list(d, "Отправить", self.presets)
+            self._draw_list(d, t("list.send"), self.presets)
         elif self.view == "nodes":
             self._draw_nodes(d)
         elif self.view == "dms":
@@ -1162,29 +1210,29 @@ class FbUI:
         if time.time() < self.status_until and self.status:
             text = self.status
         elif self.menu_open:
-            text = "↑↓:пункт A:выбор B:закрыть"
+            text = t("footer.menu")
         elif self.view == "kbd":
-            text = "A:ввод X:проб B:Backsp Y:слой L1:Shift Start:OK Select:Отмена"
+            text = t("footer.kbd")
         elif self.view == "chat":
-            text = "↑↓:выбор L1/L2:стр L2/R2:канал X:писать A:действ Y:узлы Start/M:меню"
+            text = t("footer.chat")
         elif self.view == "dm":
-            text = "↑↓:выбор L1/L2:стр X:писать A:ответ B:назад"
+            text = t("footer.dm")
         elif self.view == "map":
-            text = "крест/л.стик:пан L1/L2:зум L2/R2:узел X:тема A:я B:назад"
+            text = t("footer.map")
         elif self.view == "chcfg":
-            text = "A:редакт B:назад"
+            text = t("footer.chcfg")
         elif self.view == "chedit":
-            text = "A:поле Start:сохр Select:удал B:назад"
+            text = t("footer.chedit")
         elif self.view == "dms":
-            text = "A:открыть B:назад"
+            text = t("footer.dms")
         elif self.view == "nodes":
-            text = "L2/R2:сорт Y:поиск X:* Select:сброс B:назад"
+            text = t("footer.nodes")
         elif self.view == "ctx":
-            text = "A:выбор B:отмена"
+            text = t("footer.ctx")
         elif self.view == "nodeinfo":
-            text = "L1/L2:стр B:назад"
+            text = t("footer.nodeinfo")
         else:
-            text = "A:OK B:Назад X:Клав Y:Узлы Start/M:Меню Select:Скан"
+            text = t("footer.default")
         draw_footer_bar(d, self.W, self.H, self.footer_h, self.fonts, text)
 
     def _draw_scan(self, d, state, error, scanned) -> None:
@@ -1197,18 +1245,17 @@ class FbUI:
             return
         if not devices:
             if state == "scanning":
-                self.fonts.draw(d, (12, y), _with_preloader("Поиск Bluetooth"), COL_TEXT, "normal")
+                self.fonts.draw(d, (12, y), _with_preloader(t("scan.searching_bt")), COL_TEXT, "normal")
             elif state == "error":
-                self.fonts.draw(d, (12, y), "Ошибка:", COL_ERR, "normal")
+                self.fonts.draw(d, (12, y), t("scan.error"), COL_ERR, "normal")
                 self.fonts.draw(d, (12, y + 26), (error or "?")[:60], COL_ERR, "small")
             else:
-                self.fonts.draw(d, (12, y), "Устройств не найдено.", COL_TEXT, "normal")
-                self.fonts.draw(d, (12, y + 26), "Включите BT на Heltec. Select — скан.",
-                                COL_DIM, "small")
+                self.fonts.draw(d, (12, y), t("scan.none_found"), COL_TEXT, "normal")
+                self.fonts.draw(d, (12, y + 26), t("scan.none_hint"), COL_DIM, "small")
             return
-        caption = "Выберите радио (A — подключить):"
+        caption = t("scan.choose")
         if state == "scanning":
-            caption = "Поиск… (A — подключить сохранённое):"
+            caption = t("scan.choose_scanning")
         self.fonts.draw(d, (12, y), caption, COL_ACCENT, "normal")
         items = [f"{dev.name}  {dev.address}" for dev in devices]
         self._draw_items(d, items, self.header_h + 40, self.sel, self.scroll)
@@ -1218,7 +1265,7 @@ class FbUI:
         self._clamp_msg_sel()
         self._ensure_msg_visible()
         if not messages:
-            self.fonts.draw(d, (12, self.header_h + 40), "(пока нет сообщений)", COL_DIM, "small")
+            self.fonts.draw(d, (12, self.header_h + 40), t("chat.no_messages"), COL_DIM, "small")
             return
 
         y_bottom = self._chat_bottom()
@@ -1264,7 +1311,7 @@ class FbUI:
         if state != "connecting":
             return ""
         hint = self.radio.snapshot().connect_hint
-        return hint or "Подключение по BLE"
+        return hint or t("connect.ble")
 
     def _draw_chat(self, d, state) -> None:
         if state == "connecting":
@@ -1288,16 +1335,16 @@ class FbUI:
             return
         peer = self.dm_peer or 0
         short = self.radio.short_for_num(peer)
-        header = f"ЛС: {short}"
+        header = t("dm.header", short=short)
         if any(m.send_status == SEND_PENDING for m in self._current_messages()):
             header += "  ^..."
         self._draw_chat_messages(d, self._current_messages(), header)
 
     def _draw_dms(self, d) -> None:
         peers = self.radio.dm_peers()
-        self.fonts.draw(d, (12, self.header_h + 8), "Сообщения", COL_ACCENT, "normal")
+        self.fonts.draw(d, (12, self.header_h + 8), t("dms.title"), COL_ACCENT, "normal")
         if not peers:
-            self.fonts.draw(d, (12, self.header_h + 40), "(нет личных сообщений)", COL_DIM, "small")
+            self.fonts.draw(d, (12, self.header_h + 40), t("dms.empty"), COL_DIM, "small")
             return
         items = []
         for p in peers:
@@ -1312,27 +1359,26 @@ class FbUI:
         self._clamp_nodes_sel()
         fav_n = sum(1 for n in all_nodes if n.is_favorite)
         if self.nodes_filter:
-            title = f"Узлы {len(nodes)}/{len(all_nodes)}"
+            title = t("nodes.title_filtered", n=len(nodes), m=len(all_nodes))
         else:
-            title = f"Узлы ({len(all_nodes)})"
+            title = t("nodes.title", n=len(all_nodes))
         if fav_n:
             title += f"  *{fav_n}"
-        sort_label = NODE_SORT_LABELS.get(self.nodes_sort, self.nodes_sort)
-        title += f"  [{sort_label}]"
+        title += f"  [{node_sort_label(self.nodes_sort)}]"
         if snap.nodes_loading:
             title += "  …"
         self.fonts.draw(d, (12, self.header_h + 8), title[:58], COL_ACCENT, "normal")
         if self.nodes_filter:
             q = self.nodes_filter if len(self.nodes_filter) <= 28 else self.nodes_filter[:28] + "…"
-            self.fonts.draw(d, (12, self.header_h + 28), f"Поиск: {q}", COL_DIM, "small")
+            self.fonts.draw(d, (12, self.header_h + 28), t("nodes.search", q=q), COL_DIM, "small")
         list_y = self.header_h + (50 if self.nodes_filter else 42)
         if not nodes:
             if self.nodes_filter:
-                hint = "(нет совпадений)"
+                hint = t("nodes.no_match")
             elif snap.nodes_loading:
-                hint = "загрузка…"
+                hint = t("nodes.loading")
             else:
-                hint = "(пусто)"
+                hint = t("nodes.empty")
             self.fonts.draw(d, (12, list_y), hint, COL_DIM, "small")
             return
         row_h = self._nodes_row_h()
@@ -1350,16 +1396,17 @@ class FbUI:
                 self.fonts.draw(d, (x + 8, ry + 19), line2[:58], COL_DIM, "small")
 
     def _draw_chcfg(self, d) -> None:
-        self.fonts.draw(d, (12, self.header_h + 8), "Каналы", COL_ACCENT, "normal")
+        self.fonts.draw(d, (12, self.header_h + 8), t("chcfg.title"), COL_ACCENT, "normal")
         items = [f"{c.index}: {c.name or '-'} [{c.role_name}]" for c in self.radio.channels_list()]
         self._draw_items(d, items, self.header_h + 40, self.sel, self.scroll)
 
     def _draw_chedit(self, d) -> None:
-        self.fonts.draw(d, (12, self.header_h + 4), f"Канал {self.ch_edit_idx}", COL_ACCENT, "normal")
+        self.fonts.draw(d, (12, self.header_h + 4), t("chedit.title", idx=self.ch_edit_idx),
+                        COL_ACCENT, "normal")
         fields = [
-            f"Имя: {self.ch_edit_name or '(пусто)'}",
-            f"Роль: {ROLE_LABELS.get(self.ch_edit_role, '?')}",
-            f"PSK: {self.ch_edit_psk or '(пусто=none)'}",
+            t("chedit.name", val=self.ch_edit_name or t("common.empty")),
+            t("chedit.role", val=ROLE_LABELS.get(self.ch_edit_role, "?")),
+            t("chedit.psk", val=self.ch_edit_psk or t("chedit.psk_none")),
         ]
         y = self.header_h + 36
         for i, f in enumerate(fields):
@@ -1374,17 +1421,17 @@ class FbUI:
         positioned = self.radio.positioned_node_count()
         have_me = snap.my_lat is not None and snap.my_lon is not None
         selected = self._selected_map_node()
-        title = f"Карта z{self.map_view.zoom}"
-        theme_tag = "светл" if self.map_view.theme == "light" else "тёмн"
+        title = t("map.title", z=self.map_view.zoom)
+        theme_tag = t("map.tag_light") if self.map_view.theme == "light" else t("map.tag_dark")
         title += f" {theme_tag}"
         if selected:
             title += f"  {selected.short} {self.map_node_idx + 1}/{positioned}"
         elif have_me:
-            title += f"  {positioned} узл."
+            title += t("map.hdr_count", n=positioned)
         elif positioned:
-            title += f"  узлы ({positioned})"
+            title += t("map.hdr_nodes", n=positioned)
         elif snap.nodes_loading:
-            title += "  загрузка"
+            title += t("map.hdr_loading")
         self.fonts.draw(d, (12, self.header_h + 4), title[:58], COL_ACCENT, "small")
         nodes = self.radio.node_list()
         my_num = snap.my_num
@@ -1403,11 +1450,11 @@ class FbUI:
         img.paste(map_img, (0, self.header_h + 24))
 
     def _draw_ctx(self, d) -> None:
-        self.fonts.draw(d, (12, self.header_h + 8), "Действие", COL_ACCENT, "normal")
-        self._draw_items(d, self.ctx_items, self.header_h + 44, self.ctx_sel, 0)
+        self.fonts.draw(d, (12, self.header_h + 8), t("ctx.title"), COL_ACCENT, "normal")
+        self._draw_items(d, self._ctx_labels(), self.header_h + 44, self.ctx_sel, 0)
 
     def _draw_nodeinfo(self, d) -> None:
-        title = f"Узел: {self.info_title}" if self.info_title else "Инфо об узле"
+        title = t("nodeinfo.title", title=self.info_title) if self.info_title else t("nodeinfo.title_default")
         self.fonts.draw(d, (12, self.header_h + 8), title[:42], COL_ACCENT, "normal")
         rows = self._info_rows()
         self.scroll = min(self._info_max_scroll(), self.scroll)
@@ -1418,22 +1465,22 @@ class FbUI:
     def _draw_list(self, d, caption, items) -> None:
         self.fonts.draw(d, (12, self.header_h + 8), caption, COL_ACCENT, "normal")
         if not items:
-            self.fonts.draw(d, (12, self.header_h + 40), "(пусто)", COL_DIM, "small")
+            self.fonts.draw(d, (12, self.header_h + 40), t("common.empty"), COL_DIM, "small")
             return
         self._draw_items(d, items, self.header_h + 40, self.sel, self.scroll)
 
     def _draw_kbd(self, d) -> None:
         kind, idx = self.kbd_target
         if kind == "channel":
-            dest = f"канал #{idx}"
+            dest = t("kbd.dest_channel", idx=idx)
         elif kind == "dm":
-            dest = f"ЛС {self.radio.short_for_num(idx)}"
+            dest = t("kbd.dest_dm", short=self.radio.short_for_num(idx))
         elif kind == "chname":
-            dest = "имя канала"
+            dest = t("kbd.dest_chname")
         elif kind == "filter":
-            dest = "поиск узла"
+            dest = t("kbd.dest_filter")
         elif kind == "psk":
-            dest = "PSK"
+            dest = t("kbd.dest_psk")
         else:
             dest = "?"
         if self.kbd_reply_label:
@@ -1469,7 +1516,7 @@ class FbUI:
     def _draw_menu(self, d) -> None:
         overlay = (60, 70, self.W - 60, 70 + 40 + len(self.menu_items) * self.row_h)
         draw_menu_frame(d, overlay)
-        self.fonts.draw(d, (overlay[0] + 14, 78), "МЕНЮ", COL_ACCENT2, "normal")
+        self.fonts.draw(d, (overlay[0] + 14, 78), t("menu.title"), COL_ACCENT2, "normal")
         self._draw_items(d, self.menu_items, 110, self.menu_sel, 0,
                          x=overlay[0] + 8, width=self.W - 2 * (overlay[0] + 8))
 
@@ -1515,6 +1562,7 @@ def run_fbui(radio: RadioManager, port_dir: Path, log=print) -> int:
         log_exception("SDL import failed")
         return 1
 
+    set_language(load_language(port_dir))
     presets = load_presets(port_dir)
     log("run_fbui: creating screen")
     try:

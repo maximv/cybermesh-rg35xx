@@ -15,6 +15,7 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 from pubsub import pub
 
 from .geo import format_distance, haversine_m
+from .i18n import t
 from .msgstore import HistoryStore, load_history
 
 BROADCAST_NUM = 0xFFFFFFFF
@@ -23,11 +24,15 @@ NODE_SORT_DEFAULT = "default"
 NODE_SORT_SNR = "snr"
 NODE_SORT_DISTANCE = "distance"
 NODE_SORT_MODES = (NODE_SORT_DEFAULT, NODE_SORT_SNR, NODE_SORT_DISTANCE)
-NODE_SORT_LABELS = {
-    NODE_SORT_DEFAULT: "избр+рядом",
-    NODE_SORT_SNR: "сигнал",
-    NODE_SORT_DISTANCE: "дистанция",
+NODE_SORT_LABEL_KEYS = {
+    NODE_SORT_DEFAULT: "sort.default",
+    NODE_SORT_SNR: "sort.snr",
+    NODE_SORT_DISTANCE: "sort.distance",
 }
+
+
+def node_sort_label(mode: str) -> str:
+    return t(NODE_SORT_LABEL_KEYS.get(mode, "sort.default"))
 MESHTASTIC_SERVICE_UUID = "6ba1b218-15a8-461f-9fa8-5dcae273eafd"
 _BLE_MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
 BLE_SCAN_TIMEOUT = 10.0
@@ -224,26 +229,72 @@ def _device_fixed_gps_enabled(iface) -> bool:
     return bool(getattr(pos_cfg, "fixed_position", False))
 
 
+def _pos_from_position_config(iface) -> Tuple[Optional[float], Optional[float]]:
+    """Some firmware keeps the fixed position lat/lon on the position config message."""
+    local = getattr(iface, "localNode", None)
+    if local is None:
+        return None, None
+    lc = getattr(local, "localConfig", None)
+    pos_cfg = getattr(lc, "position", None) if lc is not None else None
+    if pos_cfg is None:
+        return None, None
+    for lat_attr, lon_attr in (
+        ("fixed_position_lat", "fixed_position_lon"),
+        ("latitude_i", "longitude_i"),
+        ("latitudeI", "longitudeI"),
+        ("latitude", "longitude"),
+        ("lat", "lon"),
+    ):
+        lat = getattr(pos_cfg, lat_attr, None)
+        lon = getattr(pos_cfg, lon_attr, None)
+        if lat:
+            deg_lat, deg_lon = _pos_deg_from_fields({"latitudeI": lat, "longitudeI": lon})
+            if deg_lat is not None:
+                return deg_lat, deg_lon
+    return None, None
+
+
+def _own_node_candidates(iface) -> List[dict]:
+    """Every dict that might carry the local node's position, in priority order."""
+    out: List[dict] = []
+    if hasattr(iface, "getMyNodeInfo"):
+        try:
+            info = iface.getMyNodeInfo()
+        except Exception:  # noqa: BLE001
+            info = None
+        if isinstance(info, dict):
+            out.append(info)
+    local = getattr(iface, "localNode", None)
+    num = getattr(local, "nodeNum", None) if local is not None else None
+    if num is not None:
+        by_num = (getattr(iface, "nodesByNum", None) or {}).get(int(num))
+        if isinstance(by_num, dict) and by_num not in out:
+            out.append(by_num)
+        for candidate in (getattr(iface, "nodes", None) or {}).values():
+            if isinstance(candidate, dict) and _parse_node_num(candidate.get("num")) == int(num):
+                if candidate not in out:
+                    out.append(candidate)
+    return out
+
+
 def _read_device_fixed_gps(iface) -> Tuple[Optional[float], Optional[float], int, bool]:
     """Read Fixed GPS flag and coordinates from connected radio (Heltec local node)."""
     fixed = _device_fixed_gps_enabled(iface)
-    node: Optional[dict] = None
-    if hasattr(iface, "getMyNodeInfo"):
-        try:
-            node = iface.getMyNodeInfo()
-        except Exception:  # noqa: BLE001
-            node = None
-    if not isinstance(node, dict):
-        local = getattr(iface, "localNode", None)
-        num = getattr(local, "nodeNum", None) if local is not None else None
-        if num is not None:
-            node = (getattr(iface, "nodesByNum", None) or {}).get(int(num))
-    if not isinstance(node, dict):
-        return None, None, POS_RANK_UNKNOWN, fixed
-    lat, lon, rank = _best_position_from_node(node)
-    if fixed and lat is not None and rank > POS_RANK_MANUAL:
-        rank = POS_RANK_MANUAL
-    return lat, lon, rank, fixed
+    best_lat: Optional[float] = None
+    best_lon: Optional[float] = None
+    best_rank = POS_RANK_UNKNOWN
+    for node in _own_node_candidates(iface):
+        lat, lon, rank = _best_position_from_node(node)
+        if lat is not None and (rank < best_rank or best_lat is None):
+            best_lat, best_lon, best_rank = lat, lon, rank
+    # Fall back to the position config message when the NodeDB has no own position.
+    if best_lat is None:
+        lat, lon = _pos_from_position_config(iface)
+        if lat is not None:
+            best_lat, best_lon, best_rank = lat, lon, POS_RANK_MANUAL
+    if fixed and best_lat is not None and best_rank > POS_RANK_MANUAL:
+        best_rank = POS_RANK_MANUAL
+    return best_lat, best_lon, best_rank, fixed
 
 
 def load_position_override(port_dir: Path) -> Optional[Tuple[float, float]]:
@@ -282,14 +333,14 @@ def save_position_override(port_dir: Path, lat: float, lon: float) -> None:
 
 def _position_source_label(rank: int) -> str:
     if rank == POS_RANK_OVERRIDE:
-        return "файл position.txt"
+        return t("pos.override")
     if rank == POS_RANK_MANUAL:
-        return "фиксированная (MANUAL)"
+        return t("pos.manual")
     if rank == POS_RANK_EXTERNAL:
-        return "внешний GPS"
+        return t("pos.external")
     if rank == POS_RANK_INTERNAL:
-        return "встроенный GPS"
-    return "неизвестно"
+        return t("pos.internal")
+    return t("pos.unknown")
 
 
 def _node_is_favorite(node: dict) -> bool:
@@ -379,9 +430,7 @@ def _open_ble_interface(address: str, log=None, ble_device: Optional[Any] = None
     if device is None and _is_ble_mac(address):
         device = _ble_warmup(address, log=log)
     if device is None:
-        raise RuntimeError(
-            f"Heltec не виден ({address}). Включите узел, отключите BLE на телефоне."
-        )
+        raise RuntimeError(t("radio.not_visible", address=address))
     target = getattr(device, "address", None) or address
 
     class FastBLEInterface(BLEInterface):
@@ -766,18 +815,37 @@ class RadioManager:
                     rank = min(rank, POS_RANK_MANUAL)
                 self._apply_own_position(lat, lon, rank)
                 self.log(f"device coords: {lat:.5f}, {lon:.5f}")
+            elif fixed:
+                self.log("device: Fixed GPS on but no coordinates in NodeDB/config yet")
+                self._request_own_position(iface)
         except Exception as exc:  # noqa: BLE001
             self.log(f"device position: {exc}")
+
+    def _request_own_position(self, iface) -> None:
+        """Ask the radio to emit its own Position so _on_position can capture it."""
+        num = self._my_node_num(iface)
+        if num is None:
+            return
+        for attr in ("sendPosition",):
+            fn = getattr(iface, attr, None)
+            if not callable(fn):
+                continue
+            try:
+                fn(destinationId=num, wantResponse=True)
+                self.log("requested own position from device")
+            except Exception as exc:  # noqa: BLE001
+                self.log(f"position request failed: {exc}")
+            return
 
     def my_node_labels(self) -> Tuple[str, str]:
         iface = self._iface()
         if iface is None:
-            return "Я", ""
+            return t("radio.me"), ""
         node = self._own_node_dict(iface)
         if not node:
-            return "Я", ""
+            return t("radio.me"), ""
         user = node.get("user") or {}
-        short = str(user.get("shortName") or user.get("longName") or "Я")
+        short = str(user.get("shortName") or user.get("longName") or t("radio.me"))
         long_name = str(user.get("longName") or short)
         return short, long_name
 
@@ -941,7 +1009,7 @@ class RadioManager:
                 short, _long = self.my_node_labels()
                 if short and short not in ("?", "me"):
                     return short
-                return "Вы"
+                return t("chat.you")
             return msg.sender
         return None
 
@@ -1033,7 +1101,7 @@ class RadioManager:
                 if self._ble_abort.is_set():
                     return
                 found = _ble_discover(BLE_SCAN_TIMEOUT)
-            devices = [BleDevice(name=(d.name or "BLE-узел"), address=d.address) for d in found]
+            devices = [BleDevice(name=(d.name or t("radio.ble_node")), address=d.address) for d in found]
             self.log(f"BLE scan found {len(devices)}: " + ", ".join(d.address for d in devices))
             with self._lock:
                 if self.state in ("connecting", "connected"):
@@ -1073,7 +1141,7 @@ class RadioManager:
                 return
             self.state = "connecting"
             self.error = None
-            self.connect_hint = "Сканирование BLE"
+            self.connect_hint = t("hint.scanning_ble")
             self._device_address = address
             self.nodes_loading = False
             self._nodes_sync_gen += 1
@@ -1160,10 +1228,8 @@ class RadioManager:
                     raise RuntimeError("connect aborted")
                 ble_device = _ble_warmup(address, log=self.log) if direct else None
                 if direct and not ble_device:
-                    raise RuntimeError(
-                        f"Heltec не виден ({address}). Включите узел, отключите BLE на телефоне."
-                    )
-                self._set_connect_hint("Подключение")
+                    raise RuntimeError(t("radio.not_visible", address=address))
+                self._set_connect_hint(t("hint.connecting"))
                 iface = (
                     _open_ble_interface(address, log=self.log, ble_device=ble_device)
                     if direct
@@ -1191,14 +1257,14 @@ class RadioManager:
                 self.log(line)
             hint = ""
             low = err.lower()
-            if "not found" in low or "не виден" in low:
-                hint = " — включите Heltec, отключите BLE на телефоне"
+            if "not found" in low or "not visible" in low or "не виден" in low:
+                hint = t("err.not_visible_hint")
             elif "timed out" in low or "timeout" in low:
-                hint = " — таймаут BLE, попробуйте ещё раз"
+                hint = t("err.timeout_hint")
             elif "pair" in low or "auth" in low:
-                hint = " — выполните: bluetoothctl pair/trust " + address
+                hint = t("err.pair_hint", address=address)
             with self._lock:
-                self.error = (err + hint) if err else ("Ошибка BLE" + hint)
+                self.error = (err + hint) if err else (t("err.ble_generic") + hint)
                 self.state = "error"
                 self._interface = None
                 self.connect_hint = ""
@@ -1287,7 +1353,7 @@ class RadioManager:
     ) -> Optional[str]:
         iface = self._iface()
         if iface is None:
-            return "Не подключено"
+            return t("radio.not_connected")
         msg = ChatMessage(
             text=text,
             sender="me",
@@ -1329,7 +1395,7 @@ class RadioManager:
     ) -> Optional[str]:
         iface = self._iface()
         if iface is None:
-            return "Не подключено"
+            return t("radio.not_connected")
         msg = ChatMessage(
             text=text,
             sender="me",
@@ -1455,8 +1521,8 @@ class RadioManager:
         if info is None:
             short = self._short_for_num(num)
             if short != str(num):
-                return [f"Узел: {short}", f"Num: {num}", "", "Подробности пока нет"]
-            return ["Узел не найден в NodeDB"]
+                return [t("nd.node", short=short), f"Num: {num}", "", t("nd.no_details")]
+            return [t("nd.not_found")]
 
         node_id = info.node_id or f"!{info.num:08x}"
         lines = [
@@ -1466,40 +1532,40 @@ class RadioManager:
             f"Num: {info.num}",
         ]
         if info.is_favorite:
-            lines.append("Избранный: да")
+            lines.append(t("nd.favorite_yes"))
         if num == self.my_num and iface is not None and _device_fixed_gps_enabled(iface):
-            lines.append("Fixed GPS: вкл")
+            lines.append(t("nd.fixed_gps_on"))
         if info.distance_m is not None:
-            lines.append(f"Дистанция: {format_distance(info.distance_m)}")
+            lines.append(t("nd.distance", val=format_distance(info.distance_m)))
         if info.lat is not None and info.lon is not None:
-            lines.append(f"Широта: {info.lat:.5f}")
-            lines.append(f"Долгота: {info.lon:.5f}")
+            lines.append(t("nd.lat", val=f"{info.lat:.5f}"))
+            lines.append(t("nd.lon", val=f"{info.lon:.5f}"))
             if num == self.my_num:
-                lines.append(f"Источник: {_position_source_label(self._my_pos_rank)}")
+                lines.append(t("nd.source", val=_position_source_label(self._my_pos_rank)))
         else:
-            lines.append("Позиция: нет")
+            lines.append(t("nd.no_position"))
         if info.snr is not None:
             lines.append(f"SNR: {info.snr}")
         if info.battery is not None:
-            lines.append(f"Батарея: {info.battery}%")
+            lines.append(t("nd.battery", val=info.battery))
         if info.last_heard:
             heard = time.strftime("%d.%m %H:%M", time.localtime(info.last_heard))
-            lines.append(f"Слышали: {heard}")
+            lines.append(t("nd.heard", val=heard))
         if raw:
             hops = raw.get("hopsAway")
             if hops is not None:
-                lines.append(f"Хопов: {hops}")
+                lines.append(t("nd.hops", val=hops))
             dm = raw.get("deviceMetrics") or {}
             voltage = dm.get("voltage")
             if voltage:
-                lines.append(f"Напряжение: {float(voltage):.2f} V")
+                lines.append(t("nd.voltage", val=f"{float(voltage):.2f}"))
             ch_util = dm.get("channelUtilization")
             if ch_util is not None:
-                lines.append(f"Загрузка эфира: {ch_util}%")
+                lines.append(t("nd.airtime", val=ch_util))
             user = raw.get("user") or {}
             role = user.get("role")
             if role is not None:
-                lines.append(f"Роль: {role}")
+                lines.append(t("nd.role", val=role))
             hw = user.get("hwModel")
             if hw is not None:
                 lines.append(f"HW: {hw}")
@@ -1531,33 +1597,33 @@ class RadioManager:
         if iface is not None and num is None:
             num = self._my_node_num(iface)
         if num is None:
-            lines = ["Свой узел не определён", "", "Подключитесь к радио по BLE"]
+            lines = [t("nd.my_undefined"), "", t("nd.connect_ble")]
             if self.my_lat is not None and self.my_lon is not None:
                 lines.extend([
                     "",
-                    "--- Координаты (локально) ---",
-                    f"Широта: {self.my_lat:.6f}",
-                    f"Долгота: {self.my_lon:.6f}",
-                    f"Источник: {_position_source_label(self._my_pos_rank)}",
+                    t("nd.coords_local"),
+                    t("nd.lat", val=f"{self.my_lat:.6f}"),
+                    t("nd.lon", val=f"{self.my_lon:.6f}"),
+                    t("nd.source", val=_position_source_label(self._my_pos_rank)),
                 ])
             if self.port_dir is not None:
                 pos_file = self.port_dir / "position.txt"
                 if pos_file.exists():
-                    lines.append(f"Файл: {pos_file.name}")
+                    lines.append(t("nd.file", name=pos_file.name))
             return lines
 
         lines = self.node_detail_lines(num)
         if self.my_lat is not None and self.my_lon is not None:
             lines.extend([
                 "",
-                "--- Координаты (карта) ---",
-                f"Широта: {self.my_lat:.6f}",
-                f"Долгота: {self.my_lon:.6f}",
-                f"Источник: {_position_source_label(self._my_pos_rank)}",
+                t("nd.coords_map"),
+                t("nd.lat", val=f"{self.my_lat:.6f}"),
+                t("nd.lon", val=f"{self.my_lon:.6f}"),
+                t("nd.source", val=_position_source_label(self._my_pos_rank)),
             ])
         else:
             lines.append("")
-            lines.append("Координаты на карте: нет")
+            lines.append(t("nd.coords_map_none"))
 
         raw = self._own_node_dict(iface) if iface else None
         if raw:
@@ -1569,7 +1635,7 @@ class RadioManager:
                 for k in raw
                 if k not in ("position", "user", "deviceMetrics", "num")
             }
-            self._append_raw_section(lines, "прочее NodeDB", extra)
+            self._append_raw_section(lines, t("nd.misc_nodedb"), extra)
 
         if iface is not None:
             for attr in ("location", "_location"):
@@ -1649,7 +1715,7 @@ class RadioManager:
     def set_node_favorite(self, num: int, favorite: bool) -> Optional[str]:
         iface = self._iface()
         if iface is None:
-            return "Не подключено"
+            return t("radio.not_connected")
         try:
             local = iface.localNode
             if favorite:
@@ -1716,7 +1782,7 @@ class RadioManager:
     def write_channel(self, index: int, name: str, role: int, psk_bytes: bytes) -> Optional[str]:
         iface = self._iface()
         if iface is None:
-            return "Not connected"
+            return t("radio.not_connected")
         try:
             from meshtastic.protobuf import channel_pb2
             from meshtastic.util import fromPSK

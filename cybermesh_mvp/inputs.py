@@ -37,6 +37,22 @@ BTN_MAP: Dict[int, str] = {
     316: "MENU",    # M / MODE
 }
 
+
+def _menu_code_overrides() -> "list[int]":
+    """Extra evdev codes to treat as the MENU button (CYBERMESH_MENU_CODE=312,139)."""
+    raw = os.environ.get("CYBERMESH_MENU_CODE") or os.environ.get("MESHTASTIC_MENU_CODE") or ""
+    out: List[int] = []
+    for tok in raw.replace(",", " ").split():
+        try:
+            out.append(int(tok, 0))
+        except ValueError:
+            pass
+    return out
+
+
+for _code in _menu_code_overrides():
+    BTN_MAP[_code] = "MENU"
+
 DIR_ACTIONS = frozenset({"UP", "DOWN", "LEFT", "RIGHT"})
 CHORD_BUTTONS = frozenset({"START", "MENU"})
 FORCE_QUIT_CHORD = frozenset({"START", "MENU"})
@@ -152,15 +168,11 @@ def combine_pan_vector(
 
     stick_v, stick_h = _left_stick_for_pan(sticks)
 
-    if _map_stick_layout() == "std":
-        vx = -float(hx) + stick_h
-        vy = -float(hy) + stick_v
-    else:
-        # RG35xx: pan() applies (dx,dy)=(vy,vx) from this vector — compensate here.
-        want_dx = -float(hx) + stick_h
-        want_dy = -float(hy) - stick_v
-        vx = want_dy
-        vy = want_dx
+    # x = right, y = down. D-pad and stick share one mapping (no axis swap):
+    #   UP -> pan up, DOWN -> pan down, LEFT -> pan left, RIGHT -> pan right.
+    # Stick vertical uses +stick_v so its up/down matches the D-pad.
+    vx = -float(hx) + stick_h
+    vy = -float(hy) + stick_v
 
     mag = math.hypot(vx, vy)
     if mag > 1.0:
@@ -192,6 +204,7 @@ class InputReader:
         self._held_dir: Dict[str, bool] = {d: False for d in DIR_ACTIONS}
         self._axis_range: Dict[int, Tuple[int, int]] = {}
         self._gamepad_paths: Set[str] = set()
+        self._logged_codes: Set[int] = set()
 
     @staticmethod
     def available() -> bool:
@@ -360,25 +373,36 @@ class InputReader:
 
     def _handle_key(self, event) -> None:
         code = event.code
-        pressed = event.value != 0
+        value = event.value
+        pressed = value != 0
         if code in BTN_MAP:
             action = BTN_MAP[code]
             self._track_chord(action, pressed)
-            if pressed:
+            # value: 1=press, 0=release, 2=autorepeat. Action buttons fire once on
+            # press; only directions are allowed to auto-repeat for held scrolling.
+            if value == 1 or (value == 2 and action in DIR_ACTIONS):
                 self._emit(action)
             return
         if code in POWER_CODES:
-            if pressed:
+            if value == 1:
                 self._emit("SCREEN_OFF")
             return
         if code not in KEY_MAP:
+            if value == 1:
+                self._log_unmapped(code)
             return
         action = KEY_MAP[code]
         if action in DIR_ACTIONS:
             self._set_held_dir(action, pressed)
         self._track_chord(action, pressed)
-        if pressed:
+        if value == 1 or (value == 2 and action in DIR_ACTIONS):
             self._emit(action)
+
+    def _log_unmapped(self, code: int) -> None:
+        if code in self._logged_codes:
+            return
+        self._logged_codes.add(code)
+        self.log(f"unmapped input code {code} (set CYBERMESH_MENU_CODE={code} to use it as MENU)")
 
     def _default_axis_range(self, code: int) -> Tuple[int, int]:
         if code in self._axis_range:
