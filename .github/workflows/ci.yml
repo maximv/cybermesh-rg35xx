@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  smoke_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 smoke_test.py
+
+  # Optional deploy to Anbernic (Settings → Secrets and variables → Actions):
+  #   ANBERNIC_HOST, ANBERNIC_USER, ANBERNIC_SSH_KEY
+  # deploy_anbernic:
+  #   runs-on: ubuntu-latest
+  #   needs: smoke_test
+  #   if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+  #   environment: anbernic
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Deploy over SSH
+  #       uses: appleboy/scp-action@v0.1.7
+  #       with:
+  #         host: ${{ secrets.ANBERNIC_HOST }}
+  #         username: ${{ secrets.ANBERNIC_USER }}
+  #         key: ${{ secrets.ANBERNIC_SSH_KEY }}
+  #         source: "."
+  #         target: "/mnt/mmc/Roms/PORTS/Cybermesh"
+  #         rm: true
+  #         strip_components: 0
+  #     - name: Install on device
+  #       uses: appleboy/ssh-action@v1.2.0
+  #       with:
+  #         host: ${{ secrets.ANBERNIC_HOST }}
+  #         username: ${{ secrets.ANBERNIC_USER }}
+  #         key: ${{ secrets.ANBERNIC_SSH_KEY }}
+  #         script: |
+  #           cd /mnt/mmc/Roms/PORTS/Cybermesh
+  #           chmod +x Cybermesh.sh install_deps.sh scripts/*.sh
+  #           ./scripts/update-on-device.sh

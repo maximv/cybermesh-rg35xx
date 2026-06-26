@@ -2,6 +2,8 @@
 
 BLE-клиент Meshtastic для Anbernic RG35xx (640×480, SDL mali).
 
+Репозиторий: [github.com/maximv/cybermesh-rg35xx](https://github.com/maximv/cybermesh-rg35xx)
+
 ## Структура на SD-карте
 
 ```
@@ -15,57 +17,30 @@ BLE-клиент Meshtastic для Anbernic RG35xx (640×480, SDL mali).
     └── scripts/
 ```
 
-## GitLab: создать репозиторий и запушить (Mac)
+## Разработка (Mac)
 
 ```bash
-cd Cybermesh-rg35xx
-
-# Авторизация (один раз) — gitlab.com или свой GitLab:
-glab auth login
-# или для gitlab.art.su:
-# glab auth login --hostname gitlab.art.su
-
-# Создать проект и запушить
-glab repo create --private --description "Cybermesh for RG35xx"
-git push -u origin main
+git clone https://github.com/maximv/cybermesh-rg35xx.git
+cd cybermesh-rg35xx
+python3 smoke_test.py
 ```
-
-Если ветка называется `master`, замените `main` на `master`.
 
 ## Anbernic: первая установка
 
 По SSH на консоли:
 
 ```bash
-cd /mnt/mmc/Roms/PORTS
-curl -O https://…/setup-device.sh   # или скопируйте scripts/setup-device.sh
-# проще — после git clone вручную:
-git clone git@gitlab.art.su:USER/cybermesh-rg35xx.git Cybermesh
-cd Cybermesh
-chmod +x scripts/*.sh Cybermesh.sh install_deps.sh
-./scripts/setup-device.sh   # если уже в каталоге — достаточно:
-./install_deps.sh
-./scripts/update-on-device.sh
+/mnt/mmc/Roms/PORTS/Cybermesh/scripts/setup-device.sh \
+  https://github.com/maximv/cybermesh-rg35xx.git
 ```
 
-Или одной командой с Mac (если есть SSH):
-
-```bash
-ssh root@ANBERNIC_IP 'bash -s' < scripts/setup-device.sh -- \
-  git@gitlab.art.su:USER/cybermesh-rg35xx.git
-```
+Скрипт удалит старые `Meshtastic/` / `Cybermesh/`, сделает `git clone`, установит зависимости и положит `Cybermesh.sh` в меню PORTS.
 
 ## Anbernic: обновление
 
 ```bash
 cd /mnt/mmc/Roms/PORTS/Cybermesh
 ./scripts/update-on-device.sh
-```
-
-## Локальная разработка
-
-```bash
-python3 smoke_test.py
 ```
 
 ## Зависимости на устройстве
@@ -76,8 +51,8 @@ python3 smoke_test.py
 
 Требуется `python3` и `pip`. Пакет `meshtastic[ble]` ставится в `pylibs/` (exFAT-safe, без venv).
 
-## CI/CD
+## CI
 
-На каждый push в GitLab запускается `smoke_test.py`.
+На каждый push в GitHub Actions запускается `smoke_test.py`.
 
-Опциональный деплой на Anbernic через GitLab CI — см. закомментированный job в `.gitlab-ci.yml` (нужны переменные `ANBERNIC_HOST`, `ANBERNIC_USER`, `SSH_PRIVATE_KEY`).
+Опциональный деплой на Anbernic — см. закомментированный job в `.github/workflows/ci.yml`.

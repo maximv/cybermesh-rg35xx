@@ -8,7 +8,7 @@ APP_DIR="$PORTS_ROOT/Cybermesh"
 
 if [ -z "$GIT_URL" ]; then
   echo "Usage: $0 <git-clone-url>"
-  echo "Example: $0 git@gitlab.art.su:you/cybermesh-rg35xx.git"
+  echo "Example: $0 https://github.com/maximv/cybermesh-rg35xx.git"
   exit 1
 fi
 
