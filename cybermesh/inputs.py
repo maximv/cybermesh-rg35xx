@@ -215,6 +215,8 @@ class InputReader:
         self._axis_range: Dict[int, Tuple[int, int]] = {}
         self._gamepad_paths: Set[str] = set()
         self._logged_codes: Set[int] = set()
+        # code -> [action, next_fire_time]; drives software autorepeat for volume keys.
+        self._vol_held: Dict[int, List] = {}
 
     @staticmethod
     def available() -> bool:
@@ -281,6 +283,9 @@ class InputReader:
         t_pwr = threading.Thread(target=self._power_loop, daemon=True)
         t_pwr.start()
         self._threads.append(t_pwr)
+        t_vol = threading.Thread(target=self._volume_repeat_loop, daemon=True)
+        t_vol.start()
+        self._threads.append(t_vol)
         self.log(f"input devices: {devices} map_stick={_map_stick_layout()}")
         return True
 
@@ -403,9 +408,15 @@ class InputReader:
                 self._emit("SCREEN_OFF")
             return
         if code in VOLUME_CODES:
-            # Allow autorepeat (value 2) so holding the key keeps changing volume.
-            if value in (1, 2):
-                self._emit(VOLUME_CODES[code])
+            action = VOLUME_CODES[code]
+            # gpio-keys usually don't auto-repeat, so we drive repeats in software.
+            if value == 1:
+                self._emit(action)
+                with self._lock:
+                    self._vol_held[code] = [action, time.monotonic() + 0.4]
+            elif value == 0:
+                with self._lock:
+                    self._vol_held.pop(code, None)
             return
         if code not in KEY_MAP:
             if value == 1:
@@ -417,6 +428,19 @@ class InputReader:
         self._track_chord(action, pressed)
         if value == 1 or (value == 2 and action in DIR_ACTIONS):
             self._emit(action)
+
+    def _volume_repeat_loop(self) -> None:
+        while not self._stop.is_set():
+            time.sleep(0.04)
+            now = time.monotonic()
+            with self._lock:
+                items = list(self._vol_held.items())
+            for code, st in items:
+                if now >= st[1]:
+                    self._emit(st[0])
+                    with self._lock:
+                        if code in self._vol_held:
+                            self._vol_held[code][1] = now + 0.12
 
     def _log_unmapped(self, code: int) -> None:
         if code in self._logged_codes:

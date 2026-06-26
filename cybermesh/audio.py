@@ -47,6 +47,59 @@ def save_sound_enabled(port_dir: Path, enabled: bool) -> None:
         pass
 
 
+DEFAULT_VOLUME = 80
+
+
+def load_volume(port_dir: Optional[Path]) -> Optional[int]:
+    if port_dir is None:
+        return None
+    path = port_dir / "volume.txt"
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    try:
+        return max(0, min(100, int(raw)))
+    except ValueError:
+        return None
+
+
+def save_volume(port_dir: Path, volume: int) -> None:
+    try:
+        port_dir.mkdir(parents=True, exist_ok=True)
+        (port_dir / "volume.txt").write_text(f"{max(0, min(100, int(volume)))}\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _scale_wav(data: bytes, gain: float) -> bytes:
+    """Return WAV bytes with 16-bit PCM samples scaled by gain (0..1)."""
+    if gain >= 0.999:
+        return data
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wf:
+            nch, sw, fr = wf.getnchannels(), wf.getsampwidth(), wf.getframerate()
+            frames = wf.readframes(wf.getnframes())
+    except Exception:  # noqa: BLE001
+        return data
+    if sw != 2:
+        return data
+    pcm = array.array("h")
+    pcm.frombytes(frames)
+    g = max(0.0, gain)
+    for i in range(len(pcm)):
+        pcm[i] = int(max(-32768, min(32767, pcm[i] * g)))
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wf:
+        wf.setnchannels(nch)
+        wf.setsampwidth(sw)
+        wf.setframerate(fr)
+        wf.writeframes(pcm.tobytes())
+    return out.getvalue()
+
+
 def _mix_tone(
     buf: array.array,
     start_s: float,
@@ -149,11 +202,15 @@ class SfxPlayer:
         log: Callable[[str], None] = print,
         *,
         enabled: Optional[bool] = None,
+        volume: Optional[int] = None,
         port_dir: Optional[Path] = None,
     ) -> None:
         self.log = log
         if enabled is None and port_dir is not None:
             enabled = load_sound_enabled(port_dir)
+        if volume is None and port_dir is not None:
+            volume = load_volume(port_dir)
+        self._volume = DEFAULT_VOLUME if volume is None else max(0, min(100, int(volume)))
         self._on = _env_enabled() if enabled is None else bool(enabled)
         self._aplay = shutil.which("aplay")
         self._lock = threading.Lock()
@@ -173,6 +230,14 @@ class SfxPlayer:
     def enabled(self) -> bool:
         return self._on
 
+    @property
+    def volume(self) -> int:
+        return self._volume
+
+    def set_volume(self, pct: int) -> int:
+        self._volume = max(0, min(100, int(pct)))
+        return self._volume
+
     def set_enabled(self, on: bool) -> None:
         if not _env_enabled():
             self._on = False
@@ -188,8 +253,9 @@ class SfxPlayer:
         return self.enabled
 
     def _play_wav(self, data: bytes, *, blocking: bool = False) -> None:
-        if not self._on or not self._aplay:
+        if not self._on or not self._aplay or self._volume <= 0:
             return
+        data = _scale_wav(data, self._volume / 100.0)
 
         def _run() -> None:
             try:
