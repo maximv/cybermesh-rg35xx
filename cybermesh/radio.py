@@ -1738,7 +1738,7 @@ class RadioManager:
             peers.append(
                 DmPeer(
                     peer_num=peer_num,
-                    short=self._short_for_num(peer_num),
+                    short=self._name_for_num(peer_num),
                     last_ts=last.ts,
                     last_text=last.text[:40],
                 )
@@ -1817,6 +1817,22 @@ class RadioManager:
 
     def short_for_num(self, num: int) -> str:
         return self._short_for_num(num)
+
+    def _name_for_num(self, num: int) -> str:
+        """Human-readable node name (long name preferred), else a !hex node id."""
+        iface = self._iface()
+        if iface is not None:
+            nodes = getattr(iface, "nodes", None) or {}
+            node = nodes.get(num)
+            if node:
+                user = node.get("user") or {}
+                name = user.get("longName") or user.get("shortName")
+                if name:
+                    return str(name)
+        return f"!{num & 0xffffffff:08x}"
+
+    def name_for_num(self, num: int) -> str:
+        return self._name_for_num(num)
 
     @staticmethod
     def _node_row_metrics(n: NodeInfo) -> str:

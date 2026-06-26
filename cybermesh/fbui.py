@@ -343,6 +343,11 @@ class FbUI:
             self.msg_sel = 0
         self.scroll = 0
 
+    def _show_chat(self) -> None:
+        """Return to the main channel chat, scrolled to the newest message."""
+        self.view = "chat"
+        self._scroll_to_latest()
+
     def _current_messages(self) -> List[ChatMessage]:
         if self.view == "dm" and self.dm_peer is not None:
             return self.radio.dm_messages(self.dm_peer)
@@ -689,6 +694,8 @@ class FbUI:
             self._activate_menu()
         elif action in ("B", "START", "MENU"):
             self.menu_open = False
+            if self.view == "chat":
+                self._scroll_to_latest()
 
     def _activate_menu(self) -> None:
         item = self.menu_ids[self.menu_sel]
@@ -758,9 +765,7 @@ class FbUI:
             dev = devices[self.sel]
             save_device(self.port_dir, dev)
             self.radio.connect(dev.address)
-            self.view = "chat"
-            self.scroll = 0
-            self.msg_sel = 0
+            self._show_chat()
 
     CTX_LABEL_KEYS = {
         "reply": "ctx.reply",
@@ -904,7 +909,7 @@ class FbUI:
             text = self.presets[self.sel]
             self._do_send(text, "channel", self.active_channel, "chat")
         elif action == "B":
-            self.view = "chat"
+            self._show_chat()
 
     def _action_nodes(self, action: str) -> None:
         nodes = self._filtered_nodes()
@@ -936,7 +941,7 @@ class FbUI:
             self._open_ctx_for_node(nodes[self.sel])
         elif action in ("B",):
             self.nodes_filter = ""
-            self.view = "chat"
+            self._show_chat()
 
     def _open_ctx_for_node(self, node) -> None:
         self.ctx_msg = None
@@ -965,7 +970,7 @@ class FbUI:
             self.msg_sel = max(0, len(self._current_messages()) - 1)
             self.scroll = 0
         elif action == "B":
-            self.view = "chat"
+            self._show_chat()
 
     def _action_chcfg(self, action: str) -> None:
         channels = self.radio.channels_list()
@@ -987,7 +992,7 @@ class FbUI:
             self.ch_field = 0
             self.view = "chedit"
         elif action == "B":
-            self.view = "chat"
+            self._show_chat()
 
     def _action_chedit(self, action: str) -> None:
         if action == "UP":
@@ -1129,7 +1134,7 @@ class FbUI:
             name = t("map.theme_light") if theme == "light" else t("map.theme_dark")
             self.set_status(t("status.map_theme", theme=name), 2)
         elif action == "B":
-            self.view = "chat"
+            self._show_chat()
 
     def _open_keyboard(
         self,
@@ -1398,7 +1403,7 @@ class FbUI:
             )
             return
         peer = self.dm_peer or 0
-        short = self.radio.short_for_num(peer)
+        short = self.radio.name_for_num(peer)
         header = t("dm.header", short=short)
         if any(m.send_status == SEND_PENDING for m in self._current_messages()):
             header += "  ^..."
@@ -1538,7 +1543,7 @@ class FbUI:
         if kind == "channel":
             dest = t("kbd.dest_channel", idx=idx)
         elif kind == "dm":
-            dest = t("kbd.dest_dm", short=self.radio.short_for_num(idx))
+            dest = t("kbd.dest_dm", short=self.radio.name_for_num(idx))
         elif kind == "chname":
             dest = t("kbd.dest_chname")
         elif kind == "filter":
