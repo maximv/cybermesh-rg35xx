@@ -28,3 +28,5 @@ meshtastic.pid
 position.txt
 sound.txt
 messages/
+# Runtime screenshots (L1+R1+Select). Committed gallery lives in docs/screenshots/
+/screenshots/
