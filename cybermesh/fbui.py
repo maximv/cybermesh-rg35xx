@@ -222,6 +222,11 @@ class FbUI:
         self.settings_scroll = 0
         self.settings_return = "chat"
         self._last_frame = None
+        # Unread DM tracking + on-screen notification. Seed seen-counts from
+        # already-loaded history so old messages don't fire notifications.
+        self._dm_seen_counts = {p: len(dq) for p, dq in self.radio.dm_msgs.items()}
+        self._unread_peers: set = set()
+        self.notif: Optional[dict] = None
         self.backlight = Backlight(log=log)
         self.sysaudio = SystemVolume(log=log)
 
@@ -406,6 +411,8 @@ class FbUI:
                 self._bat_pct, self._bat_charging = bat
         parts: List[str] = []
         parts.append(t("hud.clock", time=time.strftime("%H:%M")))
+        if self._unread_peers:
+            parts.append(t("hud.unread", n=len(self._unread_peers)))
         parts.append(t("hud.volume", pct=self._volume))
         if self._bat_pct is not None:
             chg = "+" if self._bat_charging else ""
@@ -593,6 +600,9 @@ class FbUI:
             msgs = self._current_messages()
             if msgs and (self._chat_follow or msgs[-1].from_me or self.msg_sel >= len(msgs) - 2):
                 self._scroll_to_latest()
+        if new_messages:
+            self._check_new_dms()
+        self._mark_open_dm_read()
         if self.view in ("chat", "dm") and state in ("error", "disconnected"):
             self.view = "scan"
             if not self._auto_scan_done:
@@ -651,6 +661,14 @@ class FbUI:
             return
         if action == "SCREENSHOT":
             self._save_screenshot()
+            return
+        if self.notif is not None:
+            if self.backlight.is_off:
+                self.backlight.on()
+            if self.sfx is not None:
+                self.sfx.nav_click()
+            self._notif_action(action)
+            self._dirty = True
             return
         if self.backlight.is_off:
             self.backlight.on()
@@ -1143,6 +1161,73 @@ class FbUI:
             self.nodes_filter = ""
             self._show_chat()
 
+    # --- unread DM tracking + notification --------------------------------
+
+    def _dm_active(self, peer: int) -> bool:
+        return (self.view == "dm" and self.dm_peer == peer
+                and not self.menu_open and not self.backlight.is_off)
+
+    def _check_new_dms(self) -> None:
+        for peer, dq in self.radio.dm_msgs.items():
+            cnt = len(dq)
+            seen = self._dm_seen_counts.get(peer, 0)
+            if cnt == seen:
+                continue
+            new_msgs = list(dq)[seen:] if cnt > seen else []
+            self._dm_seen_counts[peer] = cnt
+            incoming = [m for m in new_msgs if not m.from_me]
+            if incoming and not self._dm_active(peer):
+                self._unread_peers.add(peer)
+                self._show_notif(peer, incoming[-1])
+
+    def _mark_open_dm_read(self) -> None:
+        if self.view == "dm" and self.dm_peer is not None and not self.menu_open \
+                and not self.backlight.is_off:
+            self._unread_peers.discard(self.dm_peer)
+            dq = self.radio.dm_msgs.get(self.dm_peer)
+            if dq is not None:
+                self._dm_seen_counts[self.dm_peer] = len(dq)
+
+    def _show_notif(self, peer: int, msg: ChatMessage) -> None:
+        self.notif = {
+            "peer": peer,
+            "name": self.radio.name_for_num(peer),
+            "text": msg.text,
+            "sel": 0,
+        }
+        if self.backlight.is_off:
+            self.backlight.on()
+        if self.sfx is not None:
+            self.sfx.nav_click()
+        self._dirty = True
+
+    def _open_dm(self, peer: int) -> None:
+        self.dm_peer = peer
+        self.view = "dm"
+        self.menu_open = False
+        self._unread_peers.discard(peer)
+        dq = self.radio.dm_msgs.get(peer)
+        if dq is not None:
+            self._dm_seen_counts[peer] = len(dq)
+        self.msg_sel = max(0, len(self._current_messages()) - 1)
+        self.scroll = 0
+        self._chat_follow = True
+        self._ensure_msg_visible()
+
+    def _notif_action(self, action: str) -> None:
+        if self.notif is None:
+            return
+        if action in ("LEFT", "RIGHT"):
+            self.notif["sel"] = 1 - self.notif["sel"]
+        elif action == "A":
+            peer = self.notif["peer"]
+            read = self.notif["sel"] == 0
+            self.notif = None
+            if read:
+                self._open_dm(peer)
+        elif action in ("B", "MENU", "START"):
+            self.notif = None
+
     def _open_dm_peer_ctx(self) -> None:
         peer = self.dm_peer
         if peer is None:
@@ -1539,11 +1624,15 @@ class FbUI:
             self._draw_kbd(d)
 
         self._draw_footer(d)
+        if self.notif is not None:
+            self._draw_notif(d)
         self._last_frame = img
         self.screen.present(img.tobytes("raw", self.screen.raw_mode))
 
     def _draw_footer(self, d: ImageDraw.ImageDraw) -> None:
-        if time.time() < self.status_until and self.status:
+        if self.notif is not None:
+            text = t("footer.notif")
+        elif time.time() < self.status_until and self.status:
             text = self.status
         elif self.menu_open:
             text = t("footer.menu")
@@ -1861,6 +1950,32 @@ class FbUI:
                 draw_list_item(d, kbox, selected)
                 glyph = ch.upper() if self.kbd_shift else ch
                 self.fonts.draw(d, (cx + 18, cy + 6), glyph, COL_TEXT, "normal")
+
+    def _draw_notif(self, d) -> None:
+        nf = self.notif
+        if nf is None:
+            return
+        bw, bh = self.W - 120, 168
+        x0 = (self.W - bw) // 2
+        y0 = (self.H - bh) // 2
+        overlay = (x0, y0, x0 + bw, y0 + bh)
+        draw_menu_frame(d, overlay)
+        self.fonts.draw(d, (x0 + 16, y0 + 12), t("notif.title"), COL_ACCENT2, "normal")
+        self.fonts.draw(d, (x0 + 16, y0 + 42),
+                        t("notif.from", name=nf["name"])[:40], COL_ACCENT, "small")
+        preview = (nf["text"] or "").replace("\n", " ")
+        for i, line in enumerate(self._wrap(preview, bw - 32)[:2]):
+            self.fonts.draw(d, (x0 + 16, y0 + 66 + i * 18), line, COL_TEXT, "small")
+        labels = [t("notif.read"), t("notif.close")]
+        btn_w = (bw - 48) // 2
+        by = y0 + bh - 44
+        for i, label in enumerate(labels):
+            bx = x0 + 16 + i * (btn_w + 16)
+            box = (bx, by, bx + btn_w, by + 32)
+            draw_list_item(d, box, i == nf["sel"])
+            tw = self.fonts.length(label, "normal")
+            self.fonts.draw(d, (bx + max(8, (btn_w - tw) // 2), by + 6),
+                            label, COL_TEXT, "normal")
 
     def _draw_menu(self, d) -> None:
         n = len(self.menu_items)

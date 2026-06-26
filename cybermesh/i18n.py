@@ -43,6 +43,13 @@ _CATALOG = {
     "hud.clock": {"en": "{time}", "ru": "{time}"},
     "hud.volume": {"en": "VOL {pct}%", "ru": "ЗВ {pct}%"},
     "hud.battery": {"en": "BAT {pct}%{chg}", "ru": "БАТ {pct}%{chg}"},
+    "hud.unread": {"en": "✉{n}", "ru": "✉{n}"},
+    # --- DM notification ---
+    "notif.title": {"en": "New message", "ru": "Новое сообщение"},
+    "notif.from": {"en": "from {name}", "ru": "от {name}"},
+    "notif.read": {"en": "Read", "ru": "Прочитать"},
+    "notif.close": {"en": "Close", "ru": "Закрыть"},
+    "footer.notif": {"en": "←→:choose A:select B:close", "ru": "←→:выбор A:выбрать B:закрыть"},
     "status.map_theme": {"en": "Map: {theme}", "ru": "Карта: {theme}"},
     "status.screenshot": {"en": "Screenshot: {name}", "ru": "Скриншот: {name}"},
     "status.screenshot_err": {"en": "Screenshot failed: {err}", "ru": "Ошибка скриншота: {err}"},

@@ -940,6 +940,57 @@ def test_map_label_lines() -> None:
     print("map label lines OK")
 
 
+def test_dm_notification() -> None:
+    """Incoming DMs raise an unread badge + notification; reading clears them."""
+    from cybermesh.chat_types import ChatMessage
+    from cybermesh.fbui import FbUI
+
+    ui = FbUI.__new__(FbUI)  # bypass heavy __init__
+    ui.radio = RadioManager()
+    ui._dm_seen_counts = {}
+    ui._unread_peers = set()
+    ui.notif = None
+    ui.view = "chat"
+    ui.dm_peer = None
+    ui.menu_open = False
+    ui.sfx = None
+    ui._dirty = False
+    ui.msg_sel = 0
+    ui.scroll = 0
+    ui._chat_follow = True
+
+    class _BL:
+        is_off = False
+
+        def on(self):
+            self.is_off = False
+
+    ui.backlight = _BL()
+
+    peer = 0x55
+    ui.radio._append_dm(peer, ChatMessage(text="привет", sender="X", is_dm=True,
+                                          peer_num=peer, from_me=False, msg_id=1))
+    ui._check_new_dms()
+    assert peer in ui._unread_peers
+    assert ui.notif is not None and ui.notif["peer"] == peer
+
+    # Reading the DM clears the unread badge and notification.
+    ui.notif["sel"] = 0
+    ui._notif_action("A")
+    assert ui.notif is None
+    assert ui.view == "dm" and ui.dm_peer == peer
+    assert peer not in ui._unread_peers
+
+    # Our own outgoing DM must not raise a notification.
+    ui.view = "chat"
+    ui.radio._append_dm(peer, ChatMessage(text="ok", sender="me", is_dm=True,
+                                          peer_num=peer, from_me=True, msg_id=2))
+    ui._check_new_dms()
+    assert ui.notif is None
+    assert peer not in ui._unread_peers
+    print("dm notification OK")
+
+
 def test_screenshot_enhance() -> None:
     """Screenshot export lifts the very dark background so the grid is visible."""
     from PIL import Image
@@ -1151,6 +1202,7 @@ def main() -> int:
     test_keyboard_layers()
     test_volume_keys()
     test_kbd_byte_budget()
+    test_dm_notification()
     test_screenshot_enhance()
     test_screenshot_chord()
     test_hat_state_diagonal()
