@@ -40,6 +40,7 @@ _CATALOG = {
     "status.no_node_selected": {"en": "No node selected", "ru": "Узел не выбран"},
     "status.volume": {"en": "Volume {pct}%", "ru": "Громкость {pct}%"},
     "status.volume_na": {"en": "Volume control unavailable", "ru": "Громкость недоступна"},
+    "hud.clock": {"en": "{time}", "ru": "{time}"},
     "hud.volume": {"en": "VOL {pct}%", "ru": "ЗВ {pct}%"},
     "hud.battery": {"en": "BAT {pct}%{chg}", "ru": "БАТ {pct}%{chg}"},
     "status.map_theme": {"en": "Map: {theme}", "ru": "Карта: {theme}"},
@@ -130,6 +131,20 @@ _CATALOG = {
     # --- my node ---
     "mynode.title": {"en": "My node", "ru": "Мой узел"},
     "saved.device": {"en": "saved", "ru": "сохранённое"},
+    # --- settings editor ---
+    "menu.settings": {"en": "Settings", "ru": "Настройки"},
+    "settings.title": {"en": "Settings", "ru": "Настройки"},
+    "settings.owner_long": {"en": "owner.long name", "ru": "owner.имя"},
+    "settings.owner_short": {"en": "owner.short name", "ru": "owner.метка"},
+    "settings.empty": {"en": "(connect to a radio first)", "ru": "(сначала подключитесь к радио)"},
+    "settings.saved": {"en": "Saved", "ru": "Сохранено"},
+    "settings.no_change": {"en": "No change", "ru": "Без изменений"},
+    "settings.write_failed": {"en": "Write failed", "ru": "Ошибка записи"},
+    "settings.error": {"en": "Error: {err}", "ru": "Ошибка: {err}"},
+    "footer.settings": {
+        "en": "↑↓:field ←→:change A:edit/save B:back",
+        "ru": "↑↓:поле ←→:менять A:правка/сохр B:назад",
+    },
     # --- connect status ---
     "connect.ble": {"en": "Connecting over BLE", "ru": "Подключение по BLE"},
     # --- footers ---

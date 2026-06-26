@@ -896,6 +896,93 @@ def test_volume_keys() -> None:
     print("volume keys OK")
 
 
+def test_hat_state_diagonal() -> None:
+    """hat_state() reports diagonals as a single vector (for one-step node jumps)."""
+    import queue as _q
+
+    from cybermesh.inputs import InputReader
+
+    actions: "_q.Queue[str]" = _q.Queue()
+    r = InputReader(actions, log=lambda _m: None)
+    assert r.hat_state() == (0, 0)
+    # Analog hat: up + left held together -> (-1, -1).
+    r._hat_x, r._hat_y = -1, -1
+    assert r.hat_state() == (-1, -1)
+    r._hat_x, r._hat_y = 1, 1
+    assert r.hat_state() == (1, 1)
+    # KEY-based d-pad held flags also fold into the same vector.
+    r._hat_x = r._hat_y = 0
+    r._held_dir["UP"] = True
+    r._held_dir["RIGHT"] = True
+    assert r.hat_state() == (1, -1)
+    print("hat state diagonal OK")
+
+
+def test_config_field() -> None:
+    """ConfigField edit model: cycle/display/dirty work for enum & int."""
+    from cybermesh.radio import ConfigField
+
+    enum = ConfigField("lora.region", "lora.region", "enum", 1,
+                       options=[(0, "UNSET"), (1, "EU_868"), (2, "US")])
+    assert enum.display == "EU_868"
+    assert not enum.dirty
+    enum.cycle(1)
+    assert enum.display == "US" and enum.dirty
+    enum.cycle(1)  # wraps to UNSET
+    assert enum.display == "UNSET"
+
+    b = ConfigField("device.serial_enabled", "x", "bool", True,
+                    options=[(False, "OFF"), (True, "ON")])
+    assert b.display == "ON"
+    b.cycle(1)
+    assert b.display == "OFF" and b.pending is False
+
+    i = ConfigField("lora.hop_limit", "x", "int", 3)
+    i.cycle(1)
+    assert i.pending == 4 and i.display == "4"
+    i.cycle(-10)  # clamps at 0
+    assert i.pending == 0
+    print("config field OK")
+
+
+def test_device_settings_owner() -> None:
+    """device_settings exposes owner fields; apply_setting calls setOwner."""
+    r = RadioManager()
+    r.my_num = 0x1234
+
+    class FakeLocal:
+        def __init__(self):
+            self.localConfig = object()  # no recognizable config groups
+            self.owner = None
+
+        def setOwner(self, long_name=None, short_name=None):
+            self.owner = (long_name, short_name)
+
+    class FakeIface:
+        def __init__(self):
+            self.localNode = FakeLocal()
+            self.nodes = {0x1234: {"num": 0x1234,
+                                   "user": {"longName": "Old", "shortName": "OLD"}}}
+
+        def getMyNodeInfo(self):
+            return self.nodes[0x1234]
+
+    fake = FakeIface()
+    r._interface = fake
+    fields = r.device_settings()
+    keys = [f.key for f in fields]
+    assert "owner.long" in keys and "owner.short" in keys, keys
+    long_field = next(f for f in fields if f.key == "owner.long")
+    assert long_field.raw == "Old"
+
+    err = r.apply_setting("owner.short", "NEW")
+    assert err is None, err
+    assert fake.localNode.owner == ("Old", "NEW")
+    # NodeDB patched so the UI reflects the change immediately.
+    assert fake.nodes[0x1234]["user"]["shortName"] == "NEW"
+    print("device settings owner OK")
+
+
 def test_sysinfo_graceful() -> None:
     """Battery/volume helpers degrade gracefully when sysfs/amixer are absent."""
     from cybermesh.sysinfo import SystemVolume, read_battery
@@ -939,6 +1026,9 @@ def main() -> int:
     test_map_animation()
     test_keyboard_layers()
     test_volume_keys()
+    test_hat_state_diagonal()
+    test_config_field()
+    test_device_settings_owner()
     test_sysinfo_graceful()
     test_fixed_position_from_config()
     test_i18n()

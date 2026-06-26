@@ -91,6 +91,78 @@ class DmPeer:
     last_text: str
 
 
+@dataclass
+class ConfigField:
+    """One editable device setting (owner name or a protobuf config field)."""
+
+    key: str                       # e.g. "lora.region" or "owner.long"
+    label: str
+    kind: str                      # "text" | "int" | "enum" | "bool"
+    raw: Any                       # saved value (str/int/bool)
+    options: Optional[List[Tuple[int, str]]] = None  # for enum/bool: (number, name)
+    pending: Any = None            # in-progress edit, not yet written
+
+    def __post_init__(self) -> None:
+        if self.pending is None:
+            self.pending = self.raw
+
+    @property
+    def dirty(self) -> bool:
+        return self.pending != self.raw
+
+    def _name_for(self, value: Any) -> str:
+        if self.options:
+            for num, name in self.options:
+                if num == value:
+                    return name
+        if self.kind == "bool":
+            return "ON" if value else "OFF"
+        return "" if value is None else str(value)
+
+    @property
+    def display(self) -> str:
+        return self._name_for(self.pending)
+
+    def cycle(self, step: int) -> None:
+        if self.kind in ("enum", "bool") and self.options:
+            nums = [n for n, _ in self.options]
+            try:
+                i = nums.index(self.pending)
+            except ValueError:
+                i = 0
+            self.pending = nums[(i + step) % len(nums)]
+        elif self.kind == "int":
+            try:
+                self.pending = int(self.pending) + step
+            except (TypeError, ValueError):
+                self.pending = step
+            if self.pending < 0:
+                self.pending = 0
+
+
+# (group, [field names]) exposed for editing. Missing fields are skipped, so this
+# stays compatible across meshtastic firmware/library versions.
+_CONFIG_SPEC: List[Tuple[str, List[str]]] = [
+    ("device", ["role", "rebroadcast_mode", "node_info_broadcast_secs", "serial_enabled"]),
+    ("position", [
+        "gps_mode", "gps_enabled", "fixed_position", "position_broadcast_secs",
+        "position_broadcast_smart_enabled", "gps_update_interval",
+        "broadcast_smart_minimum_distance", "broadcast_smart_minimum_interval_secs",
+    ]),
+    ("power", ["is_power_saving", "wait_bluetooth_secs", "ls_secs", "min_wake_secs"]),
+    ("network", ["wifi_enabled", "wifi_ssid", "wifi_psk", "ntp_server"]),
+    ("display", [
+        "screen_on_secs", "gps_format", "units", "flip_screen",
+        "heading_bold", "displaymode", "compass_north_top",
+    ]),
+    ("lora", [
+        "region", "use_preset", "modem_preset", "hop_limit", "tx_enabled",
+        "tx_power", "sx126x_rx_boosted_gain", "override_duty_cycle",
+    ]),
+    ("bluetooth", ["enabled", "mode", "fixed_pin"]),
+]
+
+
 def _pos_deg_from_fields(pos: dict) -> Tuple[Optional[float], Optional[float]]:
     if not pos:
         return None, None
@@ -1826,6 +1898,118 @@ class RadioManager:
             return self.write_channel(index, "", channel_pb2.Channel.Role.DISABLED, b"")
         except Exception as exc:  # noqa: BLE001
             return str(exc)
+
+    # --- device settings (My Node editor) ---------------------------------
+
+    def device_settings(self) -> List[ConfigField]:
+        """All editable settings: owner name + supported localConfig fields."""
+        iface = self._iface()
+        if iface is None:
+            return []
+        fields: List[ConfigField] = []
+        short, long_name = self.my_node_labels()
+        fields.append(ConfigField("owner.long", t("settings.owner_long"), "text", long_name))
+        fields.append(ConfigField("owner.short", t("settings.owner_short"), "text", short))
+
+        local = getattr(iface, "localNode", None)
+        lc = getattr(local, "localConfig", None) if local else None
+        if lc is None:
+            return fields
+        for group_name, names in _CONFIG_SPEC:
+            group = getattr(lc, group_name, None)
+            if group is None or not hasattr(group, "DESCRIPTOR"):
+                continue
+            desc = group.DESCRIPTOR
+            for fname in names:
+                fd = desc.fields_by_name.get(fname)
+                if fd is None:
+                    continue
+                try:
+                    cf = self._build_config_field(group_name, group, fd)
+                except Exception:  # noqa: BLE001
+                    cf = None
+                if cf is not None:
+                    fields.append(cf)
+        return fields
+
+    @staticmethod
+    def _build_config_field(group_name: str, group, fd) -> Optional[ConfigField]:
+        from google.protobuf.descriptor import FieldDescriptor as FD
+
+        key = f"{group_name}.{fd.name}"
+        label = f"{group_name}.{fd.name.replace('_', ' ')}"
+        cur = getattr(group, fd.name)
+        if fd.type == FD.TYPE_BOOL:
+            return ConfigField(key, label, "bool", bool(cur),
+                               options=[(False, "OFF"), (True, "ON")])
+        if fd.type == FD.TYPE_ENUM:
+            options = [(v.number, v.name) for v in fd.enum_type.values]
+            return ConfigField(key, label, "enum", int(cur), options=options)
+        if fd.type in (FD.TYPE_INT32, FD.TYPE_UINT32, FD.TYPE_INT64,
+                       FD.TYPE_UINT64, FD.TYPE_SINT32, FD.TYPE_SINT64,
+                       FD.TYPE_FIXED32, FD.TYPE_FIXED64):
+            return ConfigField(key, label, "int", int(cur))
+        if fd.type == FD.TYPE_STRING:
+            return ConfigField(key, label, "text", str(cur))
+        return None
+
+    def apply_setting(self, key: str, value: Any) -> Optional[str]:
+        """Write one setting back to the device. Returns an error string or None."""
+        iface = self._iface()
+        if iface is None:
+            return t("radio.not_connected")
+        local = getattr(iface, "localNode", None)
+        if local is None:
+            return t("radio.not_connected")
+        try:
+            if key in ("owner.long", "owner.short"):
+                short, long_name = self.my_node_labels()
+                if key == "owner.long":
+                    long_name = str(value)
+                else:
+                    short = str(value)
+                local.setOwner(long_name=long_name, short_name=short)
+                self._patch_own_owner(iface, long_name, short)
+                self.log(f"set owner long={long_name!r} short={short!r}")
+                self._notify("state")
+                return None
+
+            from google.protobuf.descriptor import FieldDescriptor as FD
+
+            group_name, fname = key.split(".", 1)
+            lc = getattr(local, "localConfig", None)
+            group = getattr(lc, group_name, None) if lc else None
+            if group is None:
+                return t("settings.write_failed")
+            fd = group.DESCRIPTOR.fields_by_name.get(fname)
+            if fd is None:
+                return t("settings.write_failed")
+            if fd.type == FD.TYPE_BOOL:
+                setattr(group, fname, bool(value))
+            elif fd.type == FD.TYPE_ENUM:
+                setattr(group, fname, int(value))
+            elif fd.type == FD.TYPE_STRING:
+                setattr(group, fname, str(value))
+            else:
+                setattr(group, fname, int(value))
+            local.writeConfig(group_name)
+            self.log(f"wrote config {key}={value!r}")
+            self._notify("state")
+            return None
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"apply_setting {key} error: {exc}")
+            return str(exc)
+
+    def _patch_own_owner(self, iface, long_name: str, short: str) -> None:
+        num = self.my_num if self.my_num is not None else self._my_node_num(iface)
+        if num is None:
+            return
+        nodes = getattr(iface, "nodes", None) or {}
+        node = nodes.get(num)
+        if node is not None:
+            user = node.setdefault("user", {})
+            user["longName"] = long_name
+            user["shortName"] = short
 
     def short_for_num(self, num: int) -> str:
         return self._short_for_num(num)

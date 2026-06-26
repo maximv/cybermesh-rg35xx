@@ -35,7 +35,7 @@ from .i18n import (
     toggle_language,
 )
 
-KbdTarget = Tuple[str, int]  # ("channel"|"dm"|"chname"|"psk", index/peer)
+KbdTarget = Tuple[str, int]  # ("channel"|"dm"|"chname"|"psk"|"filter"|"setting", index/peer)
 
 
 def _read_text_lines(path: Path) -> List[str]:
@@ -198,6 +198,12 @@ class FbUI:
 
         self.map_view = MapView(port_dir / "assets" / "tiles", self.W, self.H)
         self.map_node_idx = -1
+        self._dpad_prev: Tuple[int, int] = (0, 0)
+        self._dpad_last = 0.0
+        self.settings_fields: List = []
+        self.settings_sel = 0
+        self.settings_scroll = 0
+        self.settings_return = "chat"
         self.backlight = Backlight(log=log)
         self.sysaudio = SystemVolume(log=log)
 
@@ -366,6 +372,7 @@ class FbUI:
             if bat is not None:
                 self._bat_pct, self._bat_charging = bat
         parts: List[str] = []
+        parts.append(t("hud.clock", time=time.strftime("%H:%M")))
         parts.append(t("hud.volume", pct=self._volume))
         if self._bat_pct is not None:
             chg = "+" if self._bat_charging else ""
@@ -441,6 +448,7 @@ class FbUI:
             "channels",
             "map",
             "mynode",
+            "settings",
             "sound",
             "lang",
             "rescan",
@@ -454,6 +462,7 @@ class FbUI:
             t("menu.channels"),
             t("menu.map"),
             t("menu.mynode"),
+            t("menu.settings"),
             t("menu.sound", state=sound),
             t("menu.lang", lang=lang_name()),
             t("menu.rescan"),
@@ -498,6 +507,8 @@ class FbUI:
 
             if self.view == "map" and not self.menu_open and not self.backlight.is_off:
                 if self.map_view.update_anim():
+                    self._dirty = True
+                if reader is not None and self._map_dpad_tick(reader):
                     self._dirty = True
                 if reader is not None and self._map_pan_tick(reader):
                     self._dirty = True
@@ -588,6 +599,8 @@ class FbUI:
             self._action_ctx(base)
         elif self.view == "nodeinfo":
             self._action_nodeinfo(base)
+        elif self.view == "settings":
+            self._action_settings(base)
 
     def _maybe_nav_sound(self, action: str) -> None:
         if self.sfx is None:
@@ -653,8 +666,8 @@ class FbUI:
             self._cycle_map_node(-1 if action == "CHPREV" else 1)
             return
         if self.view == "map" and not self.menu_open and action in ("UP", "DOWN", "LEFT", "RIGHT"):
-            if self._nav_ok():
-                self._select_map_node_dir(action)
+            # Node selection is driven by polling the D-pad as a single vector
+            # (see _map_dpad_tick) so diagonals select a diagonal node.
             return
         if self.menu_open:
             self._action_menu(action)
@@ -689,6 +702,8 @@ class FbUI:
             self._action_ctx(action)
         elif self.view == "nodeinfo":
             self._action_nodeinfo(action)
+        elif self.view == "settings":
+            self._action_settings(action)
 
     def _info_rows(self) -> int:
         return max(4, (self.H - self.header_h - self.footer_h - 44) // 20)
@@ -768,6 +783,8 @@ class FbUI:
             self._dirty = True
         elif item == "mynode":
             self._open_my_node_info()
+        elif item == "settings":
+            self._open_settings()
         elif item == "sound":
             self._toggle_sound()
             self.menu_open = True
@@ -963,6 +980,87 @@ class FbUI:
             self.view = self.info_return
             self.scroll = 0
 
+    # --- settings editor ---------------------------------------------------
+
+    def _open_settings(self) -> None:
+        self.settings_fields = self.radio.device_settings()
+        self.settings_sel = 0
+        self.settings_scroll = 0
+        self.settings_return = self._pre_menu_view
+        self.view = "settings"
+
+    def _settings_save_current(self) -> None:
+        if not self.settings_fields:
+            return
+        field = self.settings_fields[self.settings_sel]
+        if not field.dirty:
+            self.set_status(t("settings.no_change"), 1.5)
+            return
+        err = self.radio.apply_setting(field.key, field.pending)
+        if err:
+            field.pending = field.raw
+            self.set_status(t("settings.error", err=err[:40]), 3)
+            return
+        field.raw = field.pending
+        self.set_status(t("settings.saved"), 2)
+
+    def _action_settings(self, action: str) -> None:
+        fields = self.settings_fields
+        if action == "UP":
+            self.settings_sel = max(0, self.settings_sel - 1)
+            self._ensure_settings_visible()
+            return
+        if action == "DOWN":
+            self.settings_sel = min(max(0, len(fields) - 1), self.settings_sel + 1)
+            self._ensure_settings_visible()
+            return
+        if action == "B":
+            self.view = self.settings_return
+            return
+        if not fields:
+            return
+        field = fields[self.settings_sel]
+        if action in ("LEFT", "RIGHT"):
+            if field.kind in ("enum", "bool", "int"):
+                field.cycle(-1 if action == "LEFT" else 1)
+            return
+        if action == "A":
+            if field.kind == "text":
+                self._open_keyboard(("setting", self.settings_sel), "settings",
+                                    prefill=str(field.pending))
+            elif field.kind == "int":
+                self._open_keyboard(("setting", self.settings_sel), "settings",
+                                    prefill=str(field.pending))
+            else:
+                self._settings_save_current()
+
+    def _ensure_settings_visible(self) -> None:
+        rows = self._list_rows()
+        if self.settings_sel < self.settings_scroll:
+            self.settings_scroll = self.settings_sel
+        elif self.settings_sel >= self.settings_scroll + rows:
+            self.settings_scroll = self.settings_sel - rows + 1
+
+    def _draw_settings(self, d) -> None:
+        self.fonts.draw(d, (12, self.header_h + 8), t("settings.title"), COL_ACCENT, "normal")
+        fields = self.settings_fields
+        if not fields:
+            self.fonts.draw(d, (12, self.header_h + 40), t("settings.empty"), COL_DIM, "small")
+            return
+        top = self.header_h + 36
+        rows = self._list_rows()
+        self.settings_scroll = min(self.settings_scroll, max(0, len(fields) - rows))
+        x, width = 10, self.W - 20
+        for i in range(self.settings_scroll, min(len(fields), self.settings_scroll + rows)):
+            f = fields[i]
+            ry = top + (i - self.settings_scroll) * self.row_h
+            box = (x, ry, x + width, ry + self.row_h - 4)
+            draw_list_item(d, box, i == self.settings_sel)
+            mark = "▸ " if i == self.settings_sel else "  "
+            dirty = "*" if f.dirty else ""
+            label = f"{mark}{f.label}: {f.display}{dirty}"
+            self.fonts.draw(d, (x + 8, ry + 4), label[:64], COL_TEXT, "normal")
+
     def _action_send(self, action: str) -> None:
         if action == "UP":
             self.sel = max(0, self.sel - 1)
@@ -1127,13 +1225,13 @@ class FbUI:
             return self.map_view._screen_xy(snap.my_lat, snap.my_lon)
         return (self.W // 2 + self.map_view.pan_x, self.map_view.map_h // 2 + self.map_view.pan_y)
 
-    def _select_map_node_dir(self, action: str) -> None:
+    def _select_map_node_vec(self, ddx: int, ddy: int) -> None:
+        if ddx == 0 and ddy == 0:
+            return
         nodes = self._map_nodes()
         if not nodes:
             self.set_status(t("status.no_gps_nodes"), 2)
             return
-        dirs = {"LEFT": (-1, 0), "RIGHT": (1, 0), "UP": (0, -1), "DOWN": (0, 1)}
-        ddx, ddy = dirs[action]
         rx, ry = self._map_ref_xy()
         cur = self._selected_map_node()
         best_cone: Optional[int] = None
@@ -1169,6 +1267,28 @@ class FbUI:
             self.set_status(t("status.no_node_selected"), 2)
             return
         self._open_keyboard(("dm", n.num), "map")
+
+    def _map_dpad_tick(self, reader) -> bool:
+        """Poll the D-pad as a single vector so diagonals (up+left, etc.) move to
+        a diagonally located node in one step instead of two axis-aligned hops."""
+        if not hasattr(reader, "hat_state"):
+            return False
+        hx, hy = reader.hat_state()
+        now = time.time()
+        if hx == 0 and hy == 0:
+            self._dpad_prev = (0, 0)
+            return False
+        # Fire on a fresh direction immediately; repeat while held after a delay.
+        if (hx, hy) != self._dpad_prev:
+            self._dpad_prev = (hx, hy)
+            self._dpad_last = now
+            self._select_map_node_vec(hx, hy)
+            return True
+        if now - self._dpad_last >= 0.30:
+            self._dpad_last = now
+            self._select_map_node_vec(hx, hy)
+            return True
+        return False
 
     def _map_pan_tick(self, reader) -> bool:
         vx, vy = reader.stick_pan_vector()
@@ -1217,6 +1337,21 @@ class FbUI:
         self.kbd_col = 0
         self.view = "kbd"
 
+    def _commit_setting_text(self, idx: int, text: str) -> None:
+        if idx < 0 or idx >= len(self.settings_fields):
+            return
+        field = self.settings_fields[idx]
+        if field.kind == "int":
+            try:
+                field.pending = int(text.strip() or "0")
+            except ValueError:
+                self.set_status(t("settings.error", err="not a number"), 2.5)
+                return
+        else:
+            field.pending = text
+        self.settings_sel = idx
+        self._settings_save_current()
+
     def _clear_kbd_reply(self) -> None:
         self.kbd_reply_id = None
         self.kbd_reply_label = ""
@@ -1245,6 +1380,10 @@ class FbUI:
             self.nodes_filter = self.kbd_text.strip().lower()
             self.sel = 0
             self.scroll = 0
+            self.view = self.kbd_return
+            return
+        if kind == "setting":
+            self._commit_setting_text(idx, self.kbd_text)
             self.view = self.kbd_return
             return
         if not text:
@@ -1332,6 +1471,8 @@ class FbUI:
             self._draw_ctx(d)
         elif self.view == "nodeinfo":
             self._draw_nodeinfo(d)
+        elif self.view == "settings":
+            self._draw_settings(d)
         elif self.view == "kbd":
             self._draw_kbd(d)
 
@@ -1363,6 +1504,8 @@ class FbUI:
             text = t("footer.ctx")
         elif self.view == "nodeinfo":
             text = t("footer.nodeinfo")
+        elif self.view == "settings":
+            text = t("footer.settings")
         else:
             text = t("footer.default")
         draw_footer_bar(d, self.W, self.H, self.footer_h, self.fonts, text)
@@ -1613,6 +1756,9 @@ class FbUI:
             dest = t("kbd.dest_filter")
         elif kind == "psk":
             dest = t("kbd.dest_psk")
+        elif kind == "setting":
+            sf = self.settings_fields[idx] if 0 <= idx < len(self.settings_fields) else None
+            dest = sf.label if sf else "setting"
         else:
             dest = "?"
         if self.kbd_reply_label:

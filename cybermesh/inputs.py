@@ -233,6 +233,25 @@ class InputReader:
         with self._lock:
             return combine_pan_vector(0, 0, dict(self._sticks), None)
 
+    def hat_state(self) -> Tuple[int, int]:
+        """Current D-pad vector as (hx, hy), each in {-1,0,1}; x=right, y=down.
+
+        Combines the analog hat (ABS_HAT0*) with KEY-based d-pads so diagonals
+        (e.g. up+left) are reported as a single vector like (-1, -1).
+        """
+        with self._lock:
+            hx = _norm_hat(self._hat_x)
+            hy = _norm_hat(self._hat_y)
+            if self._held_dir.get("LEFT"):
+                hx = -1
+            elif self._held_dir.get("RIGHT"):
+                hx = 1
+            if self._held_dir.get("UP"):
+                hy = -1
+            elif self._held_dir.get("DOWN"):
+                hy = 1
+        return hx, hy
+
     def _candidate_devices(self) -> List[str]:
         forced = os.environ.get("CYBERMESH_GAMEPAD") or os.environ.get("MESHTASTIC_GAMEPAD")
         if forced:

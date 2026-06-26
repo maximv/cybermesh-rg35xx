@@ -296,10 +296,15 @@ class SfxPlayer:
         if self._proc is not None or not self._aplay:
             return
         self._stream_stop.clear()
+        # Keep ALSA's own buffer tiny so a freshly mixed click is heard almost
+        # immediately instead of queuing behind seconds of already-written
+        # silence. buffer-time ~= our worst-case latency floor.
+        cmd = [self._aplay, "-q", "-t", "raw", "-f", "S16_LE",
+               "-r", str(SAMPLE_RATE), "-c", "1",
+               "--buffer-time=80000", "--period-time=20000", "-"]
         try:
             self._proc = subprocess.Popen(
-                [self._aplay, "-q", "-t", "raw", "-f", "S16_LE",
-                 "-r", str(SAMPLE_RATE), "-c", "1", "-"],
+                cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
