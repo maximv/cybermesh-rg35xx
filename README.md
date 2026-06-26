@@ -11,7 +11,7 @@ BLE-клиент для Anbernic RG35xx (640×480, SDL mali).
 ├── Cybermesh.sh          ← пункт меню PORTS
 └── Cybermesh/            ← этот репозиторий
     ├── Cybermesh.sh
-    ├── cybermesh_mvp/
+    ├── cybermesh/
     ├── assets/
     ├── pylibs/           ← создаётся install_deps.sh на устройстве
     └── scripts/

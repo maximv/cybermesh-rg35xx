@@ -17,7 +17,7 @@ if [ -z "$APP" ]; then
   exit 1
 fi
 
-pkill -f "cybermesh_mvp.main" 2>/dev/null || true
+pkill -f "cybermesh.main" 2>/dev/null || true
 sleep 1
 
 if [ -x "$APP/Cybermesh.sh" ]; then

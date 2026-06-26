@@ -16,13 +16,13 @@ def _port_dir() -> Path:
 
 def main() -> int:
     port_dir = _port_dir()
-    # Boot log before any cybermesh_mvp imports (may fail on partial deploy).
+    # Boot log before any cybermesh imports (may fail on partial deploy).
     sys.path.insert(0, str(port_dir))
     pylibs = port_dir / "pylibs"
     if pylibs.is_dir():
         sys.path.insert(0, str(pylibs))
 
-    from cybermesh_mvp.logutil import (
+    from cybermesh.logutil import (
         acquire_pidfile,
         enable_faulthandler,
         init_bootlog,
@@ -42,7 +42,7 @@ def main() -> int:
         return 0
 
     try:
-        from cybermesh_mvp.radio import RadioManager
+        from cybermesh.radio import RadioManager
     except Exception:  # noqa: BLE001
         log_exception("import RadioManager failed")
         return 1
@@ -63,8 +63,8 @@ def main() -> int:
         if args.tui:
             import curses
 
-            from cybermesh_mvp.gamepad import GamepadReader
-            from cybermesh_mvp.ui import run_ui
+            from cybermesh.gamepad import GamepadReader
+            from cybermesh.ui import run_ui
 
             if not sys.stdin.isatty():
                 log("TUI needs a TTY")
@@ -90,7 +90,7 @@ def main() -> int:
 
         log("starting GUI (system SDL2 / mali)")
         try:
-            from cybermesh_mvp.fbui import run_fbui
+            from cybermesh.fbui import run_fbui
 
             return run_fbui(radio, port_dir, log=log)
         except Exception:  # noqa: BLE001

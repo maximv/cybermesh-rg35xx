@@ -22,9 +22,9 @@ except ModuleNotFoundError:
     fake.pub = types.SimpleNamespace(subscribe=lambda *a, **k: None)
     sys.modules["pubsub"] = fake
 
-from cybermesh_mvp.geo import deg2tile, format_distance, haversine_m, tile2deg
-from cybermesh_mvp.chat_types import ChatMessage, SEND_NONE, SEND_PENDING
-from cybermesh_mvp.radio import (
+from cybermesh.geo import deg2tile, format_distance, haversine_m, tile2deg
+from cybermesh.chat_types import ChatMessage, SEND_NONE, SEND_PENDING
+from cybermesh.radio import (
     BROADCAST_NUM,
     POS_RANK_INTERNAL,
     POS_RANK_MANUAL,
@@ -36,7 +36,7 @@ from cybermesh_mvp.radio import (
 
 
 def test_geo() -> None:
-    from cybermesh_mvp.geo import latlon_to_pixel, mercator_pixel, metres_per_pixel
+    from cybermesh.geo import latlon_to_pixel, mercator_pixel, metres_per_pixel
 
     d = haversine_m(55.75, 37.62, 55.76, 37.63)
     assert 1000 < d < 2000, d
@@ -215,7 +215,7 @@ def test_node_detail() -> None:
 
 
 def test_node_filter() -> None:
-    from cybermesh_mvp.radio import (
+    from cybermesh.radio import (
         NODE_SORT_DISTANCE,
         NODE_SORT_SNR,
         NodeInfo,
@@ -390,8 +390,8 @@ def test_reply_label() -> None:
 
 
 def test_mapview_offline() -> None:
-    from cybermesh_mvp.mapview import MapView
-    from cybermesh_mvp.radio import NodeInfo
+    from cybermesh.mapview import MapView
+    from cybermesh.radio import NodeInfo
 
     class FakeFonts:
         def draw(self, d, pos, text, color, size):
@@ -421,8 +421,8 @@ def test_mapview_offline() -> None:
 def test_msgstore_roundtrip() -> None:
     import tempfile
 
-    from cybermesh_mvp.chat_types import ChatMessage
-    from cybermesh_mvp.msgstore import load_history
+    from cybermesh.chat_types import ChatMessage
+    from cybermesh.msgstore import load_history
 
     with tempfile.TemporaryDirectory() as td:
         port = Path(td)
@@ -442,7 +442,7 @@ def test_msgstore_roundtrip() -> None:
 
 
 def test_ble_device() -> None:
-    from cybermesh_mvp.radio import BleDevice
+    from cybermesh.radio import BleDevice
 
     d = BleDevice(name="XIM2", address="F8:5B:1B:A1:C9:5D")
     assert d.name == "XIM2"
@@ -454,7 +454,7 @@ def test_audio_synth() -> None:
     from pathlib import Path
     import tempfile
 
-    from cybermesh_mvp.audio import (
+    from cybermesh.audio import (
         SfxPlayer,
         _gen_click_wav,
         load_sound_enabled,
@@ -485,7 +485,7 @@ def test_audio_synth() -> None:
 def test_splash_radar() -> None:
     from PIL import Image, ImageDraw
 
-    from cybermesh_mvp.splash import _smoothstep, draw_radar_frame
+    from cybermesh.splash import _smoothstep, draw_radar_frame
 
     assert _smoothstep(0.0) == 0.0
     assert _smoothstep(1.0) == 1.0
@@ -509,7 +509,7 @@ def test_splash_radar() -> None:
 
 
 def test_map_pan_vector() -> None:
-    from cybermesh_mvp.inputs import combine_pan_vector, _norm_axis, _norm_hat, _left_stick_for_pan
+    from cybermesh.inputs import combine_pan_vector, _norm_axis, _norm_hat, _left_stick_for_pan
 
     assert _norm_axis(0, -32768, 32767) == 0.0
     assert _norm_axis(32767, -32768, 32767) > 0.8
@@ -543,7 +543,7 @@ def test_map_pan_vector() -> None:
 
 
 def test_force_quit_chord() -> None:
-    from cybermesh_mvp.inputs import CHORD_BUTTONS, FORCE_QUIT_CHORD, is_force_quit_chord
+    from cybermesh.inputs import CHORD_BUTTONS, FORCE_QUIT_CHORD, is_force_quit_chord
 
     assert CHORD_BUTTONS == FORCE_QUIT_CHORD
     assert is_force_quit_chord({"START", "MENU"})
@@ -557,7 +557,7 @@ def test_menu_button_single_emit() -> None:
     """MENU must fire once per press; autorepeat (value=2) must not toggle it."""
     import queue as _q
 
-    from cybermesh_mvp.inputs import BTN_MAP, InputReader
+    from cybermesh.inputs import BTN_MAP, InputReader
 
     actions: "_q.Queue[str]" = _q.Queue()
     r = InputReader(actions, log=lambda _m: None)
@@ -579,7 +579,7 @@ def test_menu_button_single_emit() -> None:
 
 def test_fixed_position_from_config() -> None:
     """Fixed GPS on, NodeDB has no own position -> read lat/lon from position config."""
-    from cybermesh_mvp.radio import _read_device_fixed_gps
+    from cybermesh.radio import _read_device_fixed_gps
 
     class FakePosCfg:
         fixed_position = True
@@ -611,8 +611,8 @@ def test_i18n() -> None:
     from pathlib import Path
     import tempfile
 
-    from cybermesh_mvp import i18n
-    from cybermesh_mvp.radio import node_sort_label, NODE_SORT_SNR
+    from cybermesh import i18n
+    from cybermesh.radio import node_sort_label, NODE_SORT_SNR
 
     prev = i18n.get_language()
     try:

@@ -15,7 +15,7 @@ log_line() {
   echo "PPID=$PPID"
 } >> "$LOG" 2>&1
 
-pkill -f "cybermesh_mvp.main" 2>/dev/null || true
+pkill -f "cybermesh.main" 2>/dev/null || true
 sleep 0.5
 
 if [ ! -d "$PYLIBS" ]; then
@@ -30,8 +30,8 @@ export SDL_VIDEODRIVER=mali
 export SDL_AUDIODRIVER="${SDL_AUDIODRIVER:-dummy}"
 
 cd "$PORTDIR" || exit 1
-log_line "python3 -m cybermesh_mvp.main (build $VER)"
-python3 -m cybermesh_mvp.main >>"$LOG" 2>&1
+log_line "python3 -m cybermesh.main (build $VER)"
+python3 -m cybermesh.main >>"$LOG" 2>&1
 EC=$?
 log_line "python exited code=$EC"
 exit "$EC"

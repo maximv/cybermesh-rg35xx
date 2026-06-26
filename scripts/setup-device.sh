@@ -12,7 +12,7 @@ if [ -z "$GIT_URL" ]; then
   exit 1
 fi
 
-pkill -f cybermesh_mvp.main 2>/dev/null || true
+pkill -f cybermesh.main 2>/dev/null || true
 
 rm -rf "$APP_DIR"
 
