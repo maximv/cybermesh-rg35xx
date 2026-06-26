@@ -24,27 +24,34 @@ _pylibs_ok() {
   return 0
 }
 
-_needs_install() {
-  if ! _pylibs_ok; then
-    return 0
+if [ ! -f "$REQ" ]; then
+  if _pylibs_ok; then
+    echo "pylibs OK"
+    exit 0
   fi
-  if [ ! -f "$REQ" ]; then
-    return 1
-  fi
-  cur="$(_hash_req)"
-  if [ ! -f "$STAMP" ]; then
-    return 0
-  fi
-  saved="$(cat "$STAMP")"
-  [ "$cur" != "$saved" ]
-}
-
-if _needs_install; then
-  echo "Installing Python deps into pylibs/..."
-  "$PORTDIR/install_deps.sh"
-  if [ -f "$REQ" ]; then
-    _hash_req > "$STAMP"
-  fi
-else
-  echo "pylibs OK — skip install (requirements unchanged)"
+  echo "requirements.txt missing and pylibs not usable"
+  exit 1
 fi
+
+cur="$(_hash_req)"
+
+if _pylibs_ok; then
+  if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$cur" ]; then
+    echo "pylibs OK — skip install (requirements unchanged)"
+    exit 0
+  fi
+  if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" != "$cur" ]; then
+    echo "requirements.txt changed — reinstalling..."
+    "$PORTDIR/install_deps.sh"
+    echo "$cur" > "$STAMP"
+    exit 0
+  fi
+  # pylibs already fine (e.g. upgraded from older scripts) — just record stamp
+  echo "$cur" > "$STAMP"
+  echo "pylibs OK — skip install (stamp created)"
+  exit 0
+fi
+
+echo "Installing Python deps into pylibs/..."
+"$PORTDIR/install_deps.sh"
+echo "$cur" > "$STAMP"
