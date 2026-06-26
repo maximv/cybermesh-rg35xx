@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+venv/
+.pytest_cache/
+.mypy_cache/
+.pip-cache/
+
+# Device runtime (exFAT SD — install on handheld, do not commit)
+pylibs/
+*.log
+cybermesh.pid
+meshtastic.pid
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local overrides
+position.txt
+messages/
