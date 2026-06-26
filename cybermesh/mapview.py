@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -55,6 +56,11 @@ class MapView:
         self.use_tiles = True
         self.theme = "dark"
         self._prefetch_gen = 0
+        self._anim_active = False
+        self._anim_from: Tuple[float, float] = (0.0, 0.0)
+        self._anim_to: Tuple[float, float] = (0.0, 0.0)
+        self._anim_t0 = 0.0
+        self._anim_dur = 0.32
 
     def _pal(self) -> Dict[str, Tuple[int, ...]]:
         return THEMES.get(self.theme, THEMES["light"])
@@ -65,13 +71,44 @@ class MapView:
         return self.theme
 
     def center_on(self, lat: float, lon: float) -> None:
+        self._anim_active = False
         self.center_lat = lat
         self.center_lon = lon
         self.pan_x = 0
         self.pan_y = 0
         self._kick_prefetch()
 
+    def animate_to(self, lat: float, lon: float) -> None:
+        """Smoothly slide the map centre to (lat, lon) so movement direction reads."""
+        if self.center_lat == 0.0 and self.center_lon == 0.0:
+            self.center_on(lat, lon)
+            return
+        self._anim_from = (self.center_lat + 0.0, self.center_lon + 0.0)
+        self._anim_to = (lat, lon)
+        self._anim_t0 = time.monotonic()
+        self.pan_x = 0
+        self.pan_y = 0
+        self._anim_active = True
+
+    def update_anim(self) -> bool:
+        """Advance an in-progress pan animation. Returns True if the centre moved."""
+        if not self._anim_active:
+            return False
+        p = (time.monotonic() - self._anim_t0) / max(0.01, self._anim_dur)
+        if p >= 1.0:
+            self.center_lat, self.center_lon = self._anim_to
+            self._anim_active = False
+            self._kick_prefetch()
+            return True
+        e = p * p * (3.0 - 2.0 * p)  # smoothstep
+        flat, flon = self._anim_from
+        tlat, tlon = self._anim_to
+        self.center_lat = flat + (tlat - flat) * e
+        self.center_lon = flon + (tlon - flon) * e
+        return True
+
     def pan(self, dx: int, dy: int) -> None:
+        self._anim_active = False
         self.pan_x += dx
         self.pan_y += dy
 

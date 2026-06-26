@@ -12,7 +12,7 @@ import threading
 import time
 import wave
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 SAMPLE_RATE = 22050
 
@@ -72,6 +72,28 @@ def save_volume(port_dir: Path, volume: int) -> None:
         (port_dir / "volume.txt").write_text(f"{max(0, min(100, int(volume)))}\n", encoding="utf-8")
     except OSError:
         pass
+
+
+def _wav_to_samples(data: bytes) -> array.array:
+    """Decode 16-bit mono WAV bytes into an array of int16 samples."""
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wf:
+            frames = wf.readframes(wf.getnframes())
+    except Exception:  # noqa: BLE001
+        return array.array("h")
+    samples = array.array("h")
+    samples.frombytes(frames)
+    return samples
+
+
+def _pcm_to_wav_int16(samples: array.array) -> bytes:
+    bio = io.BytesIO()
+    with wave.open(bio, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(samples.tobytes())
+    return bio.getvalue()
 
 
 def _scale_wav(data: bytes, gain: float) -> bytes:
@@ -197,6 +219,8 @@ def synth_modem_disconnect(duration_s: float = 1.15) -> bytes:
 class SfxPlayer:
     """Non-blocking UI sounds (aplay on Linux / ALSA)."""
 
+    _CHUNK = 512  # ~23ms of stream per write (paces to realtime via blocking write)
+
     def __init__(
         self,
         log: Callable[[str], None] = print,
@@ -216,12 +240,21 @@ class SfxPlayer:
         self._lock = threading.Lock()
         self._last_nav = 0.0
         self._last_type = 0.0
-        self._nav_wav = _gen_click_wav(720.0, 0.022, 0.11)
-        self._type_wav = _gen_click_wav(1380.0, 0.016, 0.085)
-        self._modem_up = synth_modem_connect()
-        self._modem_down = synth_modem_disconnect()
+        self._s_nav = _wav_to_samples(_gen_click_wav(720.0, 0.022, 0.11))
+        self._s_type = _wav_to_samples(_gen_click_wav(1380.0, 0.016, 0.085))
+        self._s_modem_up = _wav_to_samples(synth_modem_connect())
+        self._s_modem_down = _wav_to_samples(synth_modem_disconnect())
+
+        # Persistent stream: a single long-lived aplay keeps the ALSA device open
+        # so the codec amp does not power-cycle (and click/pop) around each sound.
+        self._buf: List[int] = []
+        self._proc: Optional[subprocess.Popen] = None
+        self._writer: Optional[threading.Thread] = None
+        self._stream_stop = threading.Event()
+
         if self._on and self._aplay:
-            self.log(f"SfxPlayer: aplay={self._aplay}")
+            self.log(f"SfxPlayer: aplay={self._aplay} (streaming)")
+            self._start_stream()
         elif self._on:
             self.log("SfxPlayer: aplay not found — sounds disabled")
             self._on = False
@@ -241,58 +274,145 @@ class SfxPlayer:
     def set_enabled(self, on: bool) -> None:
         if not _env_enabled():
             self._on = False
+            self._stop_stream()
             return
         if on and not self._aplay:
             self.log("SfxPlayer: aplay not found — cannot enable sound")
             self._on = False
             return
         self._on = bool(on)
+        if self._on:
+            self._start_stream()
+        else:
+            self._stop_stream()
 
     def toggle(self) -> bool:
         self.set_enabled(not self.enabled)
         return self.enabled
 
-    def _play_wav(self, data: bytes, *, blocking: bool = False) -> None:
-        if not self._on or not self._aplay or self._volume <= 0:
+    # --- persistent stream -------------------------------------------------
+
+    def _start_stream(self) -> None:
+        if self._proc is not None or not self._aplay:
             return
-        data = _scale_wav(data, self._volume / 100.0)
+        self._stream_stop.clear()
+        try:
+            self._proc = subprocess.Popen(
+                [self._aplay, "-q", "-t", "raw", "-f", "S16_LE",
+                 "-r", str(SAMPLE_RATE), "-c", "1", "-"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"SfxPlayer: stream start failed: {exc}")
+            self._proc = None
+            return
+        self._writer = threading.Thread(target=self._writer_loop, daemon=True)
+        self._writer.start()
+
+    def _stop_stream(self) -> None:
+        self._stream_stop.set()
+        proc = self._proc
+        self._proc = None
+        with self._lock:
+            self._buf = []
+        if proc is not None:
+            try:
+                if proc.stdin:
+                    proc.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def close(self) -> None:
+        self._stop_stream()
+
+    def _writer_loop(self) -> None:
+        proc = self._proc
+        if proc is None or proc.stdin is None:
+            return
+        silence = b"\x00" * (self._CHUNK * 2)
+        while not self._stream_stop.is_set():
+            with self._lock:
+                if self._buf:
+                    chunk = self._buf[: self._CHUNK]
+                    del self._buf[: self._CHUNK]
+                else:
+                    chunk = None
+            if chunk is None:
+                data = silence
+            else:
+                if len(chunk) < self._CHUNK:
+                    chunk = chunk + [0] * (self._CHUNK - len(chunk))
+                data = array.array("h", chunk).tobytes()
+            try:
+                proc.stdin.write(data)
+                proc.stdin.flush()
+            except Exception:  # noqa: BLE001
+                break
+
+    def _enqueue(self, samples: "array.array") -> None:
+        gain = self._volume / 100.0
+        if not self._on or gain <= 0.0:
+            return
+        if self._proc is None:
+            # No persistent stream (e.g. start failed): fall back to one-shot aplay.
+            self._play_wav_once(samples)
+            return
+        with self._lock:
+            buf = self._buf
+            need = len(samples)
+            if len(buf) < need:
+                buf.extend([0] * (need - len(buf)))
+            for i in range(need):
+                v = int(buf[i] + samples[i] * gain)
+                buf[i] = -32768 if v < -32768 else (32767 if v > 32767 else v)
+
+    def _play_wav_once(self, samples: "array.array") -> None:
+        if not self._aplay:
+            return
+        scaled = array.array("h", (
+            max(-32768, min(32767, int(s * self._volume / 100.0))) for s in samples
+        ))
+        data = _pcm_to_wav_int16(scaled)
 
         def _run() -> None:
             try:
-                proc = subprocess.Popen(
+                p = subprocess.Popen(
                     [self._aplay, "-q", "-t", "wav", "-"],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                proc.communicate(input=data, timeout=12.0)
+                p.communicate(input=data, timeout=12.0)
             except Exception:  # noqa: BLE001
                 pass
 
-        if blocking:
-            _run()
-        else:
-            threading.Thread(target=_run, daemon=True).start()
+        threading.Thread(target=_run, daemon=True).start()
 
     def modem_connect(self, *, blocking: bool = False) -> None:
-        self._play_wav(self._modem_up, blocking=blocking)
+        self._enqueue(self._s_modem_up)
 
     def modem_disconnect(self, *, blocking: bool = False) -> None:
-        self._play_wav(self._modem_down, blocking=blocking)
+        self._enqueue(self._s_modem_down)
 
     def nav_click(self) -> None:
         now = time.monotonic()
         if now - self._last_nav < 0.045:
             return
         self._last_nav = now
-        self._play_wav(self._nav_wav)
+        self._enqueue(self._s_nav)
 
     def type_click(self) -> None:
         now = time.monotonic()
         if now - self._last_type < 0.028:
             return
         self._last_type = now
-        self._play_wav(self._type_wav)
+        self._enqueue(self._s_type)
 
     def play_for_action(self, action: str, *, view: str, menu_open: bool) -> None:
         if view == "kbd" and not menu_open:
