@@ -530,15 +530,15 @@ def test_map_pan_vector() -> None:
     assert vx > 0 and abs(vy) < 1e-9
     vx, vy = combine_pan_vector(1, 0, {})
     assert vx < 0 and abs(vy) < 1e-9
-    # RG35xx left stick (pro): ABS_Z vertical -> vy, ABS_RX horizontal -> vx.
+    # RG35xx left stick (pro, measured): ABS_Z (lz) horizontal -> vx, ABS_RX (lw) vertical -> vy.
     vx, vy = combine_pan_vector(0, 0, {"lz": 0.8, "lw": 0.0})
-    assert vy > 0.4 and abs(vx) < 1e-9
+    assert vx < -0.4 and abs(vy) < 1e-9
     vx, vy = combine_pan_vector(0, 0, {"lz": 0.0, "lw": 0.8})
-    assert vx > 0.4 and abs(vy) < 1e-9
-    # Right stick ignored for pan
+    assert vy < -0.4 and abs(vx) < 1e-9
+    # Right stick (rx/ry) ignored; lw is the left-stick vertical axis.
     stick_v, stick_h = _left_stick_for_pan({"rx": 0.9, "ry": 0.9, "lw": 0.8, "lz": 0.0})
-    assert abs(stick_h) > 0.5
-    assert abs(stick_v) < 0.01
+    assert abs(stick_v) > 0.5
+    assert abs(stick_h) < 0.01
     print("map pan vector OK")
 
 

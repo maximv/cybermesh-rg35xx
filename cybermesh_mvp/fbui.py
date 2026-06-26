@@ -603,6 +603,8 @@ class FbUI:
             self._cycle_map_node(-1 if action == "CHPREV" else 1)
             return
         if self.view == "map" and not self.menu_open and action in ("UP", "DOWN", "LEFT", "RIGHT"):
+            if self._nav_ok():
+                self._select_map_node_dir(action)
             return
         if self.menu_open:
             self._action_menu(action)
@@ -1035,13 +1037,73 @@ class FbUI:
             self.map_node_idx = 0 if direction > 0 else len(nodes) - 1
         else:
             self.map_node_idx = (self.map_node_idx + direction) % len(nodes)
-        n = nodes[self.map_node_idx]
+        self._focus_map_node(self.map_node_idx)
+
+    def _focus_map_node(self, idx: int) -> None:
+        nodes = self._map_nodes()
+        if not nodes or idx < 0 or idx >= len(nodes):
+            return
+        self.map_node_idx = idx
+        n = nodes[idx]
         self.map_view.center_on(n.lat, n.lon)
         dist = f" {format_distance(n.distance_m)}" if n.distance_m is not None else ""
-        self.set_status(f"{n.short}{dist}  {self.map_node_idx + 1}/{len(nodes)}", 3)
+        self.set_status(f"{n.short}{dist}  {idx + 1}/{len(nodes)}", 3)
+
+    def _map_ref_xy(self) -> Tuple[int, int]:
+        """Screen point to measure node directions from: selection, then me, then centre."""
+        cur = self._selected_map_node()
+        if cur is not None and cur.lat is not None and cur.lon is not None:
+            return self.map_view._screen_xy(cur.lat, cur.lon)
+        snap = self.radio.snapshot()
+        if snap.my_lat is not None and snap.my_lon is not None:
+            return self.map_view._screen_xy(snap.my_lat, snap.my_lon)
+        return (self.W // 2 + self.map_view.pan_x, self.map_view.map_h // 2 + self.map_view.pan_y)
+
+    def _select_map_node_dir(self, action: str) -> None:
+        nodes = self._map_nodes()
+        if not nodes:
+            self.set_status(t("status.no_gps_nodes"), 2)
+            return
+        dirs = {"LEFT": (-1, 0), "RIGHT": (1, 0), "UP": (0, -1), "DOWN": (0, 1)}
+        ddx, ddy = dirs[action]
+        rx, ry = self._map_ref_xy()
+        cur = self._selected_map_node()
+        best_cone: Optional[int] = None
+        best_cone_d = 0.0
+        best_any: Optional[int] = None
+        best_any_d = 0.0
+        for i, n in enumerate(nodes):
+            if cur is not None and n.num == cur.num:
+                continue
+            if n.lat is None or n.lon is None:
+                continue
+            nx, ny = self.map_view._screen_xy(n.lat, n.lon)
+            vx, vy = nx - rx, ny - ry
+            proj = vx * ddx + vy * ddy
+            if proj <= 0:
+                continue
+            dist = math.hypot(vx, vy)
+            if best_any is None or dist < best_any_d:
+                best_any, best_any_d = i, dist
+            # Prefer nodes within a 45° cone of the pressed direction.
+            perp = abs(vx * ddy - vy * ddx)
+            if perp <= proj and (best_cone is None or dist < best_cone_d):
+                best_cone, best_cone_d = i, dist
+        target = best_cone if best_cone is not None else best_any
+        if target is None:
+            self.set_status(t("status.no_gps_nodes"), 1.5)
+            return
+        self._focus_map_node(target)
+
+    def _map_write_selected(self) -> None:
+        n = self._selected_map_node()
+        if n is None:
+            self.set_status(t("status.no_node_selected"), 2)
+            return
+        self._open_keyboard(("dm", n.num), "map")
 
     def _map_pan_tick(self, reader) -> bool:
-        vx, vy = reader.map_pan_vector()
+        vx, vy = reader.stick_pan_vector()
         mag = math.hypot(vx, vy)
         if mag < 0.05:
             return False
@@ -1057,6 +1119,8 @@ class FbUI:
 
     def _action_map(self, action: str) -> None:
         if action == "A":
+            self._map_write_selected()
+        elif action == "Y":
             lat, lon, _have_me = self.radio.map_anchor()
             if lat is not None and lon is not None:
                 self.map_view.center_on(lat, lon)

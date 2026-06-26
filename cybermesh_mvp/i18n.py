@@ -37,6 +37,7 @@ _CATALOG = {
     "status.filter_reset": {"en": "Filter cleared", "ru": "Фильтр сброшен"},
     "status.no_node_data": {"en": "No node data", "ru": "Нет данных об узле"},
     "status.no_gps_nodes": {"en": "No nodes with GPS", "ru": "Нет узлов с GPS"},
+    "status.no_node_selected": {"en": "No node selected", "ru": "Узел не выбран"},
     "status.map_theme": {"en": "Map: {theme}", "ru": "Карта: {theme}"},
     # --- send results ---
     "send.sending": {"en": "Sending…", "ru": "Отправка…"},
@@ -144,8 +145,8 @@ _CATALOG = {
         "ru": "↑↓:выбор L1/L2:стр X:писать A:ответ B:назад",
     },
     "footer.map": {
-        "en": "dpad/stick:pan L1/L2:zoom L2/R2:node X:theme A:me B:back",
-        "ru": "крест/л.стик:пан L1/L2:зум L2/R2:узел X:тема A:я B:назад",
+        "en": "dpad:node stick:pan L1/L2:zoom A:write X:theme Y:me B:back",
+        "ru": "крест:узел стик:пан L1/L2:зум A:писать X:тема Y:я B:назад",
     },
     "footer.chcfg": {"en": "A:edit B:back", "ru": "A:редакт B:назад"},
     "footer.chedit": {

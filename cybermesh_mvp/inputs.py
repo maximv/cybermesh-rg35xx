@@ -85,8 +85,8 @@ if ecodes is not None:
     for attr, name in (
         ("ABS_X", "lx"),
         ("ABS_Y", "ly"),
-        ("ABS_Z", "lz"),    # RG35xx left stick vertical (event1)
-        ("ABS_RX", "lw"),   # RG35xx left stick horizontal (event1 probe)
+        ("ABS_Z", "lz"),    # RG35xx left stick HORIZONTAL (event1, measured)
+        ("ABS_RX", "lw"),   # RG35xx left stick VERTICAL (event1, measured)
         ("ABS_RY", "ry"),   # right stick vertical
         ("ABS_RZ", "rx"),   # right stick horizontal
     ):
@@ -134,9 +134,10 @@ def _left_stick_for_pan(sticks: Dict[str, float]) -> Tuple[float, float]:
         vertical = _stick_pick(sticks, "ly", "lz")
         horizontal = _stick_pick(sticks, "lx", "lw")
         return vertical, horizontal
-    # RG35xx pro: left = ABS_Z + ABS_RX on /dev/input/event1
-    vertical = _stick_pick(sticks, "lz", "ly")
-    horizontal = _stick_pick(sticks, "lw", "lx")
+    # RG35xx pro (event1): left stick = ABS_Z (horizontal) + ABS_RX (vertical).
+    # Negate so pushing up/left yields positive vertical/horizontal (matches D-pad).
+    vertical = -_stick_pick(sticks, "lw", "ly")
+    horizontal = -_stick_pick(sticks, "lz", "lx")
     return vertical, horizontal
 
 
@@ -216,6 +217,11 @@ class InputReader:
             return combine_pan_vector(
                 self._hat_x, self._hat_y, dict(self._sticks), dict(self._held_dir)
             )
+
+    def stick_pan_vector(self) -> Tuple[float, float]:
+        """Pan vector from the analog stick only (D-pad is used for node selection)."""
+        with self._lock:
+            return combine_pan_vector(0, 0, dict(self._sticks), None)
 
     def _candidate_devices(self) -> List[str]:
         forced = os.environ.get("CYBERMESH_GAMEPAD") or os.environ.get("MESHTASTIC_GAMEPAD")
