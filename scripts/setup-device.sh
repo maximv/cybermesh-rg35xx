@@ -23,7 +23,6 @@ git clone "$GIT_URL" "$APP_DIR"
 
 cd "$APP_DIR"
 chmod +x Cybermesh.sh install_deps.sh scripts/*.sh 2>/dev/null || true
-./install_deps.sh
 ./scripts/update-on-device.sh
 
 echo ""

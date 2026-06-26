@@ -12,6 +12,7 @@ venv/
 
 # Device runtime (exFAT SD — install on handheld, do not commit)
 pylibs/
+.pylibs-requirements.sha256
 *.log
 cybermesh.pid
 meshtastic.pid

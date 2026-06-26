@@ -43,10 +43,19 @@ cd /mnt/mmc/Roms/PORTS/Cybermesh
 ./scripts/update-on-device.sh
 ```
 
-## Зависимости на устройстве
+Скрипт делает `git pull` и обновляет лаунчер. **Зависимости переустанавливаются только** если нет `pylibs/`, они сломаны или изменился `requirements.txt`.
+
+Принудительная переустановка:
 
 ```bash
 ./install_deps.sh
+```
+
+## Зависимости на устройстве
+
+```bash
+./scripts/ensure-deps.sh   # обычно достаточно
+./install_deps.sh          # полная переустановка pylibs/
 ```
 
 Требуется `python3` и `pip`. Пакет `meshtastic[ble]` ставится в `pylibs/` (exFAT-safe, без venv).
