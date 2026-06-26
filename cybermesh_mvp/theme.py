@@ -7,6 +7,7 @@ from typing import Tuple
 from PIL import ImageDraw
 
 APP_NAME = "CYBERMESH"
+APP_VERSION = "0.1b"
 APP_TAGLINE = "mesh // uplink"
 
 # Core palette (RGBA)

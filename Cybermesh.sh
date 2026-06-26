@@ -3,7 +3,7 @@
 PORTDIR="$(cd "$(dirname "$0")" && pwd)"
 PYLIBS="$PORTDIR/pylibs"
 LOG="$PORTDIR/cybermesh.log"
-VER="2026-06-26c"
+VER="0.1b"
 
 log_line() {
   echo "[$(date +%H:%M:%S)] $*" >> "$LOG"

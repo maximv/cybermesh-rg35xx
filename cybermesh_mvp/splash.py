@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw
 from .theme import (
     APP_NAME,
     APP_TAGLINE,
+    APP_VERSION,
     COL_ACCENT,
     COL_ACCENT2,
     COL_BG,
@@ -140,7 +141,7 @@ def draw_radar_frame(
     if ease > 0.35 and fonts is not None:
         title_y = cy + max_r + 22
         fonts.draw(d, (w // 2 - fonts.length(APP_NAME, "large") // 2, title_y), APP_NAME, COL_ACCENT, "large")
-        tag = APP_TAGLINE
+        tag = f"{APP_TAGLINE}  ·  v{APP_VERSION}"
         fonts.draw(
             d,
             (w // 2 - fonts.length(tag, "small") // 2, title_y + 28),
@@ -150,9 +151,11 @@ def draw_radar_frame(
         )
 
     if phase_text and fonts is not None and ease > 0.2:
+        # Top of the screen, clear of the CYBERMESH title/tagline at the bottom.
+        phase_y = max(14, cy - max_r - 24)
         fonts.draw(
             d,
-            (w // 2 - fonts.length(phase_text, "small") // 2, h - 52),
+            (w // 2 - fonts.length(phase_text, "small") // 2, phase_y),
             phase_text,
             COL_DIM,
             "small",
